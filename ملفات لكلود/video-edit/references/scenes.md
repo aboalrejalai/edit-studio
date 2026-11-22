@@ -141,6 +141,17 @@ bash scripts/07_contact_sheet.sh <work> <work>/sheet.jpg 4.6 12.3 27.6 31.0 48.4
 bash scripts/04b_remotion.sh <work> setup            # يربطه بالمحرّك المشترك (أول مرة على الجهاز: engine بعد إذنه، ~400 ميقا)
 bash scripts/04b_remotion.sh <work> studio           # تايم-لاين حي على المتصفح
 ```
+**بلير الحركة (المحرّك 4.0.545):** حركة سريعة (سحبة، طيران عنصر، دخول قوي) تطلع ممسوحة مثل الكاميرا لو لفّيتها:
+```tsx
+import {HtmlInCanvasMotionBlur} from '@remotion/motion-blur';
+<HtmlInCanvasMotionBlur width={1080} height={1920} shutterAngle={180} samples={8}><Thing /></HtmlInCanvasMotionBlur>
+// الانتقال: <TransitionSeries.Transition presentation={slide()} timing={...} motionBlur={{shutterAngle: 180, samples: 16}} />
+```
+- العنصر اللي يتحرك يقرا `useCurrentFrame()` بداخله (مكوّن ابن)، وإلا ما يطلع بلير.
+- غالي: كل إطار يترسم `samples` مرة. حطّه على اللحظات السريعة بس، مو على المشهد كله.
+- يبان بالرندر. المعاينة الحية تبينه بكروم بس. `CameraMotionBlur` و`Trail` القديمة لا تستخدمها (ألوانها تغلط).
+- البلير يحتاج 4.0.545 أو أحدث. لو `04b` قال إن المحرّك أقدم، أو `engine-check` قال `newer`: اطلب إذنه وشغّل `engine-upgrade`.
+
 مستطيلات عرض الفيديو تنكتب بـ`<work>/stage.json` ونصوص الختام بـ`<work>/outro.json` — وتنعكس بالمحرّكين.
 بالويندوز: صور المشاهد (`staticFile(...)`) حطها بـ`<work>/assets/`، و`04b sync` ينسخها لـ`remotion/public/` ويضيف للاسم العربي الجاي من ماك (NFD) الاسم NFC اللي يكتبه `staticFile`. صورة تحطها بيدك بـ`remotion/public/` بعد sync سمها بحروف انجليزية (مثل lion.png).
 **اقرأ `sheet.jpg` وحدها — لا تقرأ الصور وحدة وحدة.** ورقة واحدة = قراءة واحدة بدل خمس. **لا ترسم الفيديو كامل قبل ما تعاين ٦ لقطات على الأقل**، واعرض الورقة على المستخدم.

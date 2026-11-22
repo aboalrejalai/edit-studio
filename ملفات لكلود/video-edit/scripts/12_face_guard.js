@@ -7,7 +7,7 @@
 
    الاستعمال:  node scripts/12_face_guard.js <work> scan|check|broll
 */
-const path=require('path'), fs=require('fs'), cp=require('child_process'), {readJSON}=require('./_paths');
+const path=require('path'), fs=require('fs'), cp=require('child_process'), {readJSON,rmTree}=require('./_paths');
 const W=path.resolve(process.argv[2])+path.sep, MODE=process.argv[3]||'scan';
 const TMP=W+'fg';
 /* الفريمات: المحرّك الخفيف عنده vfr/ كاملة (30 بالثانية). ريموشن ما يحتاجها، فنطلّع عيّنة 2 بالثانية من cutz.mp4
@@ -18,6 +18,9 @@ if(!fs.existsSync(VFR) || !fs.readdirSync(VFR).some(f=>f.endsWith('.jpg'))){
   if(!fs.existsSync(VFR) || !fs.readdirSync(VFR).some(f=>f.endsWith('.jpg'))){
     if(!fs.existsSync(W+'cutz.mp4')){ console.log('❌ ما فيه cutz.mp4 — شغّل 03_cut_zoom.py أول'); process.exit(2); }
     fs.mkdirSync(VFR,{recursive:true});
+    /* ويندوز: ffmpeg بقايمة كلمات بلا cmd.exe، فمجلد شغل فيه % او & او ^ يوصل كما هو (cmd كان يفك %OS%).
+       وffmpeg نفسه يقرا % في نمط الفريمات، فنكتبها %% بمسار المجلد والا يكتب ملف واحد اسمه %05d.jpg */
+    if(process.platform==='win32') cp.execFileSync('ffmpeg',['-v','error','-i',W+'cutz.mp4','-vf','fps=2,format=rgb24','-pix_fmt','yuvj444p','-q:v','3',VFR.replace(/%/g,'%%')+'/%05d.jpg'],{stdio:'pipe',windowsHide:true}); else
     cp.execSync('ffmpeg -v error -i '+JSON.stringify(W+'cutz.mp4')+' -vf "fps=2,format=rgb24" -pix_fmt yuvj444p -q:v 3 '+JSON.stringify(VFR+'/%05d.jpg'),{stdio:'pipe'});
   }
 }
@@ -26,11 +29,14 @@ const PYENV=process.platform==='win32'?{env:{...process.env,PYTHONUTF8:'1',PYTHO
 const PM_HINT='⚠️ كاشف الوجه ناقص — جهزه ب bash scripts/00_setup.sh --install';   /* ويندوز: الكاشف في venv ادوات المونتاج */
 /* ويندوز: personmask.py يطلع بـ3 لو ادواته ناقصة، فنتخطى الفحص بهدوء مثل الماك بدل ما نطيح، ونمسح الفريمات الموقتة.
    ويطلع بـ4 لو ما قرا ولا فريم: هذا مو «ما فيه وجه»، فنطلع بـ3 والفحص ما ينحسب ناجح.
-   --faces-only: هنا نقرا صناديق الوجه بس (meta.json)، فما نقص الشخص ولا نكتب اقنعته */
+   --faces-only: هنا نقرا صناديق الوجه بس (meta.json)، فما نقص الشخص ولا نكتب اقنعته.
+   امر الكاشف من _paths (بايثون والسكربت بين علامتي تنصيص JSON) نقطعه لكلماته وننادي execFileSync بلا cmd.exe */
+const argv=c=>c.match(/"(?:[^"\\]|\\.)*"|\S+/g).map(t=>t[0]==='"'?JSON.parse(t):t);
 function runPM(dir,outd){
-  try{ cp.execSync(PM+' '+JSON.stringify(dir)+' '+JSON.stringify(outd)+' fast 2 --faces-only',{stdio:'pipe',...PYENV}); }
+  const a=argv(PM);
+  try{ cp.execFileSync(a[0],[...a.slice(1),dir,outd,'fast','2','--faces-only'],{stdio:'pipe',...PYENV}); }
   catch(e){
-    fs.rmSync(dir,{recursive:true,force:true}); fs.rmSync(outd,{recursive:true,force:true});
+    rmTree(dir); rmTree(outd);
     if(e.status===3){ console.log(PM_HINT); console.log('تخطيت الفحص'); process.exit(0); }
     if(e.status===4){ console.log('❌ ما قدرت اقرا الفريمات (مسار فيه حروف غير انجليزية؟)'); process.exit(3); }
     console.error(String(e.stderr||'').trim().split(/\r?\n/).pop()||e.message); process.exit(1);
@@ -40,7 +46,7 @@ function runPM(dir,outd){
    وأقل من ٩٠٪ فريمات انقرت → خروج 3 (⛔ كان يرجع «ما لقيت وجهاً» وينجح بصمت لما OpenCV ما يقرا المسار العربي). */
 function runDetector(dir,outd,n){
   const K=require('./_paths'), r=K.runPersonmask(PM,dir,outd,'fast',2);
-  const cleanup=()=>{ fs.rmSync(dir,{recursive:true,force:true}); fs.rmSync(outd,{recursive:true,force:true}); };
+  const cleanup=()=>{ rmTree(dir); rmTree(outd); };
   if(!r.ok){
     cleanup(); const pr=K.personmaskProblem(r);
     if(pr.kind==='missing'){ console.log('⚠️ '+pr.text+'\n   فحص الوجه ما انعمل — لا تعتبره سليماً.'); process.exit(0); }
@@ -70,7 +76,7 @@ function sample(n){
 function detect(){
   ensureBin();
   const dir=TMP+'/in', outd=TMP+'/out';
-  fs.rmSync(dir,{recursive:true,force:true}); fs.mkdirSync(dir,{recursive:true});
+  rmTree(dir); fs.mkdirSync(dir,{recursive:true});
   const files=sample(40);
   for(const f of files) fs.copyFileSync(VFR+'/'+f, dir+'/'+f);
   if(process.platform==='win32') runPM(dir,outd); else
@@ -82,7 +88,7 @@ function detect(){
     if(!b||typeof b.y!=='number'||typeof b.h!=='number') continue;
     faces.push({top:b.y, bot:b.y+b.h, cx:(typeof b.x==='number'&&typeof b.w==='number')?b.x+b.w/2:null, idx:files.indexOf(row.f)});
   }
-  fs.rmSync(dir,{recursive:true,force:true}); fs.rmSync(outd,{recursive:true,force:true});
+  rmTree(dir); rmTree(outd);
   return faces;
 }
 /* ═══ كشف البي-رول: الفريمات اللي ما فيها وجه المتحدث ═══
@@ -93,7 +99,7 @@ if (MODE === 'broll') {
   const all = fs.readdirSync(VFR).filter(f => f.endsWith('.jpg')).sort();
   const STEP = Math.max(1, Math.round(SPS/2));      /* عيّنة كل نصف ثانية */
   const dir = TMP + '/bin', outd = TMP + '/bout';
-  fs.rmSync(dir, {recursive:true, force:true}); fs.mkdirSync(dir, {recursive:true});
+  rmTree(dir); fs.mkdirSync(dir, {recursive:true});
   const picked = [];
   for (let i = 0; i < all.length; i += STEP) { picked.push(all[i]); fs.copyFileSync(VFR+'/'+all[i], dir+'/'+all[i]); }
   if (process.platform === 'win32') runPM(dir, outd); else
@@ -111,7 +117,7 @@ if (MODE === 'broll') {
     if (ok && st !== null) { segs.push([st, t]); st = null; }
   });
   if (st !== null) segs.push([st, (all.length) / SPS]);
-  fs.rmSync(dir,{recursive:true,force:true}); fs.rmSync(outd,{recursive:true,force:true});
+  rmTree(dir); rmTree(outd);
   const keep = segs.filter(([a,b]) => b - a >= 0.7);
   if (!keep.length) console.log('ما لقيت لقطات بي-رول — الفيديو كله حديث للكاميرا.');
   else {

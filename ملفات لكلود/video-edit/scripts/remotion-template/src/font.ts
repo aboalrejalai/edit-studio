@@ -23,15 +23,19 @@ const W: [number,string][] = [[300,'Light'],[400,'Regular'],[500,'Medium'],[700,
 /* ويندوز (رندر 04b بس، REMOTION_FONT_STRICT): خط الكابشن ما تحمل = الرندر يوقف، بدل كابشن بخط بديل بصمت.
    نقيس النص بالخط وبدونه: نفس العرض = المتصفح ما لقاه. بدون المتغير (الماك والاستوديو) نكمل كما كان. */
 const STRICT = !!((window as any).process?.env?.REMOTION_FONT_STRICT);
+/* ويندوز: FONTS تخلص بعد continueRender، وindex.ts يسجل الجذر بعدها. الماك يسجله فورا ولا احد ينتظرها. */
+export const WINPC = /^Win/.test(navigator.platform || '');
+let loaded: () => void = () => undefined;
+export const FONTS: Promise<void> = new Promise((r) => { loaded = r; });
 const done = (): void => {
-  if (!STRICT) { continueRender(h); return; }
+  if (!STRICT) { continueRender(h); loaded(); return; }
   const f = `700 80px "${T.font}"`, s = 'سلام 123';
   document.fonts.load(f, s).then(() => {
     const c = document.createElement('canvas').getContext('2d')!;
     c.font = `${f}, monospace`; const a = c.measureText(s).width;
     c.font = '700 80px monospace';
     if (a === c.measureText(s).width) throw new Error('fallback');
-    continueRender(h);
+    continueRender(h); loaded();
   }).catch(() => cancelRender(new Error('⛔ الخط «' + T.font + '» ما تحمل: ' + (FONT_LOCAL
     ? 'ثبته على الجهاز او شيل fontLocal من theme.json' : 'تاكد من النت ومن اسمه في Google Fonts'))));
 };

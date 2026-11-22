@@ -38,6 +38,22 @@ def _load(name):
     return fw_device.load(name)
 
 
+def drop_prompt(path):
+
+    import tempfile
+    d = os.path.dirname(os.path.abspath(path))
+    if os.path.basename(path) != 'prompt.txt' or not os.path.basename(d).startswith('mohrer-stt-'):
+        return
+    tmp = {os.path.normcase(os.path.realpath(t)) for t in (tempfile.gettempdir(), os.environ.get('TEMP'), os.environ.get('TMP')) if t}
+    if os.path.normcase(os.path.realpath(os.path.dirname(d))) not in tmp:
+        return
+    try:
+        os.remove(path)
+        os.rmdir(d)
+    except OSError:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--model', default='mlx-community/whisper-large-v3-mlx')
@@ -73,6 +89,8 @@ def main():
                 prompt = f.read().strip() or None
         except OSError:
             prompt = None
+        if os.name == 'nt':
+            drop_prompt(a.prompt_file)
 
     fw = [None]
 

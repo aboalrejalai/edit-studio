@@ -226,6 +226,53 @@ jobs:
           "$(cat "$HOME/mpy.txt")" -c "import mediapipe as m, numpy as np, cv2; d = m.solutions.face_detection.FaceDetection(model_selection=1); r = d.process(np.zeros((480, 640, 3), np.uint8)); d.close(); print('mediapipe', m.__version__, 'OpenCV', cv2.__version__, '| faces on an empty frame:', len(r.detections or [])); assert m.__version__ == '0.10.21', m.__version__"
       - name: montage skill, setup check (what it says is missing on this machine) (info)
         run: bash "$HOME/.claude/skills/video-edit/scripts/00_setup.sh" || echo "check exit $?"
+      - name: the drawing engine (1.0.32) — «04b_remotion.sh engine» brings Remotion 4.0.545, a second run downloads nothing, the real motion blur (HtmlInCanvasMotionBlur) draws a moving box smeared; then the follower's Claude updates an older engine itself — engine-check, and engine-upgrade from 4.0.539 on a work folder (both engines draw its frames, they match, the engine is swapped, the old one kept)
+        # [1.0.32] Remotion 4.0.527 → 4.0.545; engine-check / engine-upgrade / engine_cmp.cjs (remotion-engine-version.test.mjs)
+        run: |
+          set -e
+          SK="${SK:-$HOME/.claude/skills/video-edit/scripts}"
+          m(){ cygpath -m "$1" 2>/dev/null || printf %s "$1"; }   # node and ffmpeg get C:/ paths
+          V="${V:-$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf %s "$RUNNER_TEMP")/veb-remotion}"; W="$V/work"; mkdir -p "$W"; echo '{"total":2}' > "$W/caps.json"
+          VEB_HOME="$V" bash "$SK/04b_remotion.sh" "$W" engine | tail -3
+          N="$V/remotion-shared/node_modules"
+          want="$(sed -n 's/.*"remotion": *"\([^"]*\)".*/\1/p' "$SK/remotion-shared/package.json" | head -1)"
+          have="$(node -p 'require(process.argv[1]).version' "$(m "$N/remotion/package.json")")"
+          echo "engine $have, the skill asks $want"; [ "$have" = "$want" ] && [ "$have" = 4.0.545 ]
+          VEB_HOME="$V" bash "$SK/04b_remotion.sh" "$W" engine | grep -q 'منزّل من قبل' || { echo "FAILED: a second «engine» downloaded again"; exit 1; }
+          # a small project with the real motion blur, linked to the shared engine like a work folder
+          P="$V/blur"; mkdir -p "$P/src"
+          node -e 'require("fs").symlinkSync(process.argv[1], process.argv[2], "junction")' "$(m "$N")" "$(m "$P/node_modules")"
+          printf '%s\n' "import {registerRoot} from 'remotion'; import {Root} from './Root'; registerRoot(Root);" > "$P/src/index.ts"
+          cat > "$P/src/Root.tsx" <<'TSX'
+          import React from 'react';
+          import {AbsoluteFill, Composition, useCurrentFrame} from 'remotion';
+          import {HtmlInCanvasMotionBlur} from '@remotion/motion-blur';
+          const Box: React.FC = () => { const f = useCurrentFrame(); return <div style={{position: 'absolute', top: 40, left: f * 40, width: 40, height: 40, background: '#fff'}} />; };
+          const Blur: React.FC = () => <AbsoluteFill style={{background: '#000'}}><HtmlInCanvasMotionBlur width={320} height={120} shutterAngle={360} samples={8}><Box /></HtmlInCanvasMotionBlur></AbsoluteFill>;
+          export const Root: React.FC = () => <Composition id="Blur" component={Blur} durationInFrames={6} fps={30} width={320} height={120} />;
+          TSX
+          CLI="$(node -p 'const d=process.argv[1],b=require(d+"/package.json").bin;require("path").join(d,typeof b==="string"?b:b.remotion)' "$(m "$P/node_modules/@remotion/cli")")"
+          ( cd "$P" && node "$CLI" still Blur "$(m "$P/blur.png")" --frame=3 --log=error )
+          # the box moved 40 px a frame: blurred, the white spreads over a strip much wider than the box, in grey steps
+          ffmpeg -hide_banner -loglevel error -y -i "$(m "$P/blur.png")" -vf "crop=320:1:0:60" -f rawvideo -pix_fmt gray "$(m "$P/row.raw")"
+          node -e 'const b=require("fs").readFileSync(process.argv[1]); const lit=[...b].filter(v=>v>8).length, mid=[...b].filter(v=>v>8&&v<247).length; console.log("lit", lit, "grey", mid); if (lit < 60 || mid < 20) { console.log("FAILED: no motion blur"); process.exit(1); }' "$(m "$P/row.raw")"
+          # the follower's Claude updates the engine itself: engine-check, then engine-upgrade from an older Remotion (4.0.539)
+          #   on a real work folder: both engines draw its frames, they match, the engine is swapped and the old one kept
+          VEB_HOME="$V" bash "$SK/04b_remotion.sh" "$W" engine-check | tee chk.txt
+          grep -q '^ENGINE_CHECK current have=4.0.545' chk.txt || grep -q '^ENGINE_CHECK newer have=4.0.545' chk.txt || { echo "FAILED: engine-check"; exit 1; }
+          V2="$V/old"; W2="$V2/work"; mkdir -p "$V2/remotion-shared" "$W2"
+          sed 's/"4\.0\.545"/"4.0.539"/g' "$SK/remotion-shared/package.json" > "$V2/remotion-shared/package.json"
+          ( cd "$V2/remotion-shared" && npm install --no-audit --no-fund --loglevel=error >/dev/null && npx --no-install remotion browser ensure >/dev/null )
+          printf '%s\n' '{"total":6,"cards":[{"s":0.2,"e":2.5,"w":[{"t":"هذا","s":0.2,"e":0.8,"hot":false},{"t":"اختبار","s":0.8,"e":2.5,"hot":true}]}]}' > "$W2/caps.json"
+          printf '%s\n' '{"bg":"#101418","ink":"#f2efe8","acc":"#e8b04a","clay":"#c86b4a","mut":"#7a8088","sand":"#d8c9a8","sky":"#6aa6d8","warm":"#e07a3a","cream":"#f5ecd8","font":"Tajawal","fontDisplay":"Tajawal","handle":"@test","captionSize":64,"captionWeight":700,"captionMaxW":900,"faceAnchor":"center","faceX":0.5}' > "$W2/theme.json"
+          VEB_HOME="$V2" bash "$SK/04b_remotion.sh" "$W2" setup | tail -2
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=s=1080x1920:r=30:d=6" -c:v libx264 -pix_fmt yuv444p -crf 18 "$(m "$W2/remotion/public/video444.mp4")"
+          VEB_HOME="$V2" ENGINE_CMP_FRAMES=15,60,150 bash "$SK/04b_remotion.sh" "$W2" engine-upgrade 4.0.545 | tee up.txt
+          grep -q 'ENGINE_CMP same' up.txt || { echo "FAILED: the two engines did not match"; exit 1; }
+          [ "$(node -p 'require(process.argv[1]).version' "$(m "$V2/remotion-shared/node_modules/remotion/package.json")")" = 4.0.545 ] || { echo "FAILED: not swapped"; exit 1; }
+          [ "$(node -p 'require(process.argv[1]).version' "$(m "$V2/remotion-shared-old/node_modules/remotion/package.json")")" = 4.0.539 ] || { echo "FAILED: the old engine was not kept"; exit 1; }
+          [ "$(node -p 'require(process.argv[1]).version' "$(m "$W2/remotion/node_modules/remotion/package.json")")" = 4.0.545 ] || { echo "FAILED: the work folder does not reach the new engine"; exit 1; }
+          echo "the engine updated itself: 4.0.539 → 4.0.545, its frames the same"
       - name: start, status, info
         run: |
           S="$HOME/Documents/video-edit/studio/app/scripts"
@@ -236,14 +283,115 @@ jobs:
           cut -c1-200 info.json; echo
           # الاستوديو المركّب يشوف كاشف الوجه على ويندوز (فتطلع أزرار الوجه)
           python -c "import json; d=json.load(open('info.json', encoding='utf-8')); print('platform', d.get('platform'), 'face', d.get('face')); assert d.get('face') is True"
-      - name: a studio with no pack (1.0.27) — the install makes no packs folder and lists none; a stand-in piece put in <data>/home/packs is read by the server, listed and its files served (only from inside it); once it goes, the studio lists none again
+      - name: the server has a hidden console of its own (1.0.32) — start.sh starts it through a hidden bash, so a program it starts without windowsHide opens no terminal window
+        # 1.0.31 started the server detached: no console, so every child without windowsHide opened a Windows Terminal window
+        # (test studios side by side froze a PC). AttachConsole on the server's pid says which: «console=NO» is the old route
+        run: |
+          SJ="$HOME/Documents/video-edit/studio/projects/.mohrer/server.json"
+          SPID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$(cygpath -m "$SJ")")"
+          echo "server pid $SPID"
+          cat > "$HOME/console-of.ps1" <<'PS'
+          param([int]$ProcessId)
+          $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public static class ConsoleOf {
+            [DllImport("kernel32.dll", SetLastError=true)] static extern bool FreeConsole();
+            [DllImport("kernel32.dll", SetLastError=true)] static extern bool AttachConsole(uint pid);
+            [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+            public static string Of(uint pid) {
+              FreeConsole();
+              if (!AttachConsole(pid)) return "console=NO error=" + Marshal.GetLastWin32Error();
+              IntPtr h = GetConsoleWindow(); bool v = h != IntPtr.Zero && IsWindowVisible(h);
+              FreeConsole();
+              return "console=yes window=" + (h != IntPtr.Zero) + " visible=" + v;
+            }
+          }
+          "@
+          [ConsoleOf]::Of([uint32]$ProcessId)
+          PS
+          LINE="$(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$(cygpath -w "$HOME/console-of.ps1")" -ProcessId "$SPID" 2>/dev/null </dev/null | tr -d '\r')"
+          echo "$LINE"
+          case "$LINE" in
+            *"console=yes"*"visible=False"*) echo "the server owns a hidden console" ;;
+            *) echo "the server has no hidden console of its own: a child without windowsHide would open a window"; exit 1 ;;
+          esac
+      - name: real work opens no console (1.0.32) — «مقطع جديد» (the whole montage) and an export, while every new console host under the server is counted
+        # A console window comes with a console host (conhost.exe) whose parent is the program that got it. The sampler lists
+        # each conhost.exe whose parent is the server or anything under it (the server's own hidden one has the hop bash as
+        # its parent, outside that tree). Polled every 150 ms: a child shorter than that can slip by; step A is the proof
+        # for those, this one is what the follower sees.
+        run: |
+          S="$HOME/Documents/video-edit/studio/app/scripts"
+          D="$HOME/Documents/video-edit/studio"
+          URL="$(bash "$S/studio.sh" status | sed -n 's/^running: //p')"
+          SPID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$(cygpath -m "$D/projects/.mohrer/server.json")")"
+          cat > "$HOME/conhost-watch.ps1" <<'PS'
+          param([int]$Root, [string]$Out, [string]$Stop)
+          $ProgressPreference = 'SilentlyContinue'; $seen = @{}
+          Set-Content -Path $Out -Value '' -Encoding UTF8
+          while (-not (Test-Path $Stop)) {
+            $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name)
+            $kids = @{}
+            foreach ($p in $all) { $k = [int]$p.ParentProcessId; if (-not $kids.ContainsKey($k)) { $kids[$k] = New-Object System.Collections.ArrayList }; [void]$kids[$k].Add($p) }
+            $tree = New-Object 'System.Collections.Generic.HashSet[int]'; [void]$tree.Add($Root)
+            $q = New-Object System.Collections.Queue; $q.Enqueue($Root)
+            while ($q.Count) { $x = [int]$q.Dequeue(); if ($kids.ContainsKey($x)) { foreach ($c in $kids[$x]) { if ($tree.Add([int]$c.ProcessId)) { $q.Enqueue([int]$c.ProcessId) } } } }
+            foreach ($p in $all) {
+              if ($p.Name -eq 'conhost.exe' -and $tree.Contains([int]$p.ParentProcessId) -and -not $seen.ContainsKey([int]$p.ProcessId)) {
+                $seen[[int]$p.ProcessId] = 1
+                $par = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1
+                Add-Content -Path $Out -Value ("conhost {0} for {1} {2}" -f $p.ProcessId, $p.ParentProcessId, $par.Name) -Encoding UTF8
+              }
+            }
+            Start-Sleep -Milliseconds 150
+          }
+          PS
+          OUT="$HOME/conhost-new.txt"; STOP="$HOME/conhost-stop"; rm -f "$STOP"
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$(cygpath -w "$HOME/conhost-watch.ps1")" -Root "$SPID" -Out "$(cygpath -w "$OUT")" -Stop "$(cygpath -w "$STOP")" </dev/null >/dev/null 2>&1 &
+          WATCH=$!
+          sleep 3
+          ffmpeg -nostdin -v error -y -f lavfi -i testsrc2=size=360x640:rate=30:duration=8 -f lavfi -i "sine=f=220:d=8" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$HOME/console-clip.mp4"
+          VIDEO="$(cygpath -w "$HOME/console-clip.mp4")" URL="$URL" PYTHONIOENCODING=utf-8 python - > "$HOME/console-folder.txt" <<'PY'
+          import json, os, time, urllib.error, urllib.request
+          url, video = os.environ['URL'], os.environ['VIDEO']
+          def call(path, body=None):
+              req = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode('utf-8'),
+                                           headers={'content-type': 'application/json'}, method='GET' if body is None else 'POST')
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return r.status, json.loads(r.read().decode('utf-8'))
+          st, j = call('api/raw/start', {'path': video, 'name': 'بلا نوافذ', 'mode': 'full', 'face': 'none'})
+          assert st == 202 and j.get('folder'), j
+          folder = j['folder']
+          for _ in range(600):
+              st, lst = call('api/projects')
+              e = next((p for p in lst.get('projects', []) if p.get('folder') == folder), None)
+              if e and e.get('status') != 'preparing' and e.get('phase') != 'running':
+                  break
+              time.sleep(1)
+          else:
+              raise SystemExit('the new clip never got ready: ' + json.dumps(e, ensure_ascii=False))
+          print(folder)
+          PY
+          FOLDER="$(tr -d '\r' < "$HOME/console-folder.txt" | tail -1)"
+          echo "clip: $FOLDER"
+          [ -n "$FOLDER" ] || { echo "no new clip: the montage did not run, so this proves nothing"; exit 1; }
+          bash "$S/studio.sh" export "$D/projects/$FOLDER" "بلا نوافذ" || { echo "the export failed ($?): this proves nothing"; exit 1; }
+          sleep 2
+          kill -0 "$WATCH" 2>/dev/null && [ -f "$OUT" ] || { echo "the console watcher was not running: this proves nothing"; exit 1; }
+          : > "$STOP"; wait "$WATCH" 2>/dev/null || true
+          echo "new console hosts under the server:"; cat "$OUT"
+          [ -z "$(tr -d '\r\n\357\273\277' < "$OUT")" ] || { echo "a program the server started got a console of its own"; exit 1; }
+          echo "0 new consoles"
+      - name: a studio with no pack (1.0.27) — the install makes no packs folder and lists none; a stand-in piece put in <data>/home/packs waits for the yes (1.0.32), then is read by the server, listed and its files served (only from inside it); once it goes, the studio lists none again
         run: |
           S="$HOME/Documents/video-edit/studio/app/scripts"
           D="$HOME/Documents/video-edit/studio"
           URL="$(bash "$S/studio.sh" status | sed -n 's/^running: //p')"
           test ! -e "$D/home/packs" || { echo "FAILED: the install made $D/home/packs"; exit 1; }
           # [1.0.31] the list names the pieces left out too (skipped, with why): none installed, both empty
-          test "$(curl -s -m 30 "${URL}api/packs")" = '{"pieces":[],"skipped":[]}' || { echo "FAILED: a pack is listed with none installed"; exit 1; }
+          test "$(curl -s -m 30 "${URL}api/packs")" = '{"pieces":[],"skipped":[],"waiting":[]}' || { echo "FAILED: a pack is listed with none installed"; exit 1; }
           test "$(curl -s -m 30 -o /dev/null -w '%{http_code}' "${URL}packs/demo/piece.mjs")" = 404
           # a stand-in piece (generic: one template, its words, a file of its own)
           mkdir -p "$D/home/packs/demo/fonts"
@@ -255,8 +403,21 @@ jobs:
           URL="$(bash "$S/studio.sh" status | sed -n 's/^running: //p')"
           curl -s -m 30 "${URL}api/packs" > packs.json
           cat packs.json; echo
-          # used: the server imported it itself (a Windows path made a file URL)
-          python -c "import json; d=json.load(open('packs.json', encoding='utf-8')); assert [(p['id'], p['entry'], p['used']) for p in d['pieces']] == [('demo', '/packs/demo/piece.mjs', True)], d"
+          # [1.0.32] a new piece waits for the user's yes: not run, not listed as on, its files not served
+          python -c "import json; d=json.load(open('packs.json', encoding='utf-8')); assert d['pieces'] == [] and [w['id'] for w in d['waiting']] == ['demo'], d"
+          test "$(curl -s -m 30 -o /dev/null -w '%{http_code}' "${URL}packs/demo/piece.mjs")" = 404
+          # the yes, as the page gives it: the page key from the page, the hash the card showed
+          KEY="$(curl -s -m 30 -H 'sec-fetch-dest: document' "$URL" | sed -n 's/.*name="studio-key" content="\([^"]*\)".*/\1/p')"
+          test -n "$KEY" || { echo "FAILED: no page key on the page"; exit 1; }
+          H="$(python -c "import json; print(json.load(open('packs.json', encoding='utf-8'))['waiting'][0]['hash'])")"
+          printf '{"id":"demo","hash":"%s","run":true}' "$H" > answer.json
+          CODE="$(curl -s -m 30 -o /dev/null -w '%{http_code}' -H 'content-type: application/json' --data-binary @answer.json "${URL}api/packs/answer")"
+          [ "$CODE" = 403 ] || { echo "FAILED: a yes without the page key got $CODE (not 403)"; exit 1; }
+          curl -s -m 30 -f -H "x-studio-key: $KEY" -H 'content-type: application/json' --data-binary @answer.json "${URL}api/packs/answer"; echo
+          curl -s -m 30 "${URL}api/packs" > packs.json
+          cat packs.json; echo
+          # used: the server imported it itself, right after the yes
+          python -c "import json; d=json.load(open('packs.json', encoding='utf-8')); assert [(p['id'], p['entry'], p['used']) for p in d['pieces']] == [('demo', '/packs/demo/piece.mjs', True)] and d['waiting'] == [], d"
           test "$(curl -s -m 30 -o /dev/null -w '%{http_code}' "${URL}packs/demo/piece.mjs")" = 200
           test "$(curl -s -m 30 -o /dev/null -w '%{http_code}' "${URL}packs/demo/fonts/demo.ttf")" = 200
           test "$(curl -s -m 30 -o /dev/null -w '%{http_code}' "${URL}packs/demo/piece.json")" = 404
@@ -265,7 +426,7 @@ jobs:
           bash "$S/studio.sh" stop
           bash "$S/start.sh" --no-open
           URL="$(bash "$S/studio.sh" status | sed -n 's/^running: //p')"
-          test "$(curl -s -m 30 "${URL}api/packs")" = '{"pieces":[],"skipped":[]}'
+          test "$(curl -s -m 30 "${URL}api/packs")" = '{"pieces":[],"skipped":[],"waiting":[]}'
       - name: the window of its own (0.9.7), the browser for it is found, the app page is served, and it opens
         run: |
           S="$HOME/Documents/video-edit/studio/app/scripts"
@@ -897,8 +1058,17 @@ jobs:
             say(guardPath(proj, 'media/own.mp4') === path.join(proj, 'media', 'own.mp4'), 'a file of the project is found');
             say(guardPath(proj, 'media/fx/a.mp4') === null, 'a file through a junction out of the project is refused');
             say(guardPath(proj, 'media/fx/new.wav') === null, 'nor written through it');
-            noteLinkOut(path.join(out, 'a.mp4'));
-            say(guardPath(proj, 'media/fx/a.mp4') !== null, 'a file the studio linked itself is found');
+            // [1.0.32] a link is the studio's by its own place: a file reached through a junction stays refused even once noted
+            noteLinkOut(path.join(out, 'a.mp4'), path.join(proj, 'media', 'fx', 'a.mp4'));
+            say(guardPath(proj, 'media/fx/a.mp4') === null, 'a file through a junction stays refused even once the studio noted it');
+            // a file link the studio made itself (Windows needs the right to make one: the runner has it) is found, only to read
+            let fileLink = true;
+            try { fs.symlinkSync(path.join(out, 'a.mp4'), path.join(proj, 'media', 'm.mp4'), 'file'); } catch (e) { fileLink = false; console.log('  (no file link here:', e.code, ')'); }
+            if (fileLink) {
+              noteLinkOut(path.join(out, 'a.mp4'), path.join(proj, 'media', 'm.mp4'));
+              say(guardPath(proj, 'media/m.mp4') === path.join(proj, 'media', 'm.mp4'), 'a file the studio linked itself is found');
+              say(guardPath(proj, 'media/m.mp4', { write: true }) === null, 'and never written through');
+            }
             useLinksHome(null);
             // «اعتمد شكله للسلسلة» takes plain files of the project only: a fonts junction out of it is not copied
             const lib = path.join(T, 'lib'), clip = path.join(lib, 'clip'), other = path.join(T, 'other');
@@ -3135,6 +3305,70 @@ jobs:
           URL="$URL" FOLDER="$FOLDER" TITLE="$TITLE" BROWSER_MJS="$(cygpath -w "$HOME/Documents/video-edit/studio/app/studio/server/browser.mjs")" NODE="$(cygpath -w "$(command -v node)")" PYTHONIOENCODING=utf-8 python "$(cygpath -w "$HOME/raise_check.py")"
           taskkill //F //IM chrome.exe >/dev/null 2>&1 || true
           taskkill //F //IM msedge.exe >/dev/null 2>&1 || true
+      - name: doctor and the montage check say where the montage data went (1.0.32) — the default data folder is new and empty, the montage data sits in C:\EditStudio; nothing is moved
+        # A follower whose «Documents» OneDrive moved, or whose data folder rule picked the other candidate, saw his projects,
+        # profile and drawing engine as gone. Here: a home of its own (USERPROFILE and HOME) whose Documents is empty, and
+        # C:\EditStudio holding a profile, the rule's other candidate. CLAUDE_CONFIG_DIR keeps the installed montage skill in
+        # reach (doctor reads its _paths.home_split). The montage check runs first: since 1.0.32 its plain check makes no
+        # data folder (doctor makes <data>/studio for its own write test, as before)
+        run: |
+          set +e
+          H="$(cygpath -u "$RUNNER_TEMP")/moved-home"; rm -rf "$H"; mkdir -p "$H/Documents"
+          # whatever an earlier step left in C:\EditStudio is kept aside and put back after
+          KEEP=""; [ -e /c/EditStudio ] && { KEEP=/c/EditStudio.keep-$$; mv /c/EditStudio "$KEEP" && [ ! -e /c/EditStudio ] || { echo "C:\\EditStudio could not be kept aside: nothing is touched"; exit 1; }; }
+          mkdir -p /c/EditStudio && printf '{}' > /c/EditStudio/profile.json
+          run(){ env -u VEB_HOME -u STUDIO_DATA HOME="$H" USERPROFILE="$(cygpath -w "$H")" CLAUDE_CONFIG_DIR="$(cygpath -m "$HOME/.claude")" "$@"; }
+          ok=1
+          OUTS="$(run bash "$HOME/.claude/skills/video-edit/scripts/00_setup.sh" 2>&1)"; printf '%s\n' "$OUTS" | grep -E "بيانات مونتاج"
+          printf '%s\n' "$OUTS" | grep -q "فيه بيانات مونتاج في C:/EditStudio (profile.json)" || { echo "the montage check did not name C:/EditStudio"; ok=0; }
+          [ -z "$(ls -A "$H/Documents" 2>/dev/null)" ] || { echo "the plain montage check made something: $(ls -A "$H/Documents")"; ok=0; }
+          OUTD="$(run bash "$HOME/Documents/video-edit/studio/app/scripts/doctor.sh" 2>&1)"; printf '%s\n' "$OUTD" | grep -E "بيانات مونتاج|^النتيجة"
+          printf '%s\n' "$OUTD" | grep -q "فيه بيانات مونتاج في C:/EditStudio (profile.json)" || { echo "doctor did not name C:/EditStudio"; ok=0; }
+          [ "$(ls -A /c/EditStudio)" = profile.json ] || { echo "C:\\EditStudio changed: $(ls -A /c/EditStudio)"; ok=0; }
+          rm -rf /c/EditStudio "$H"; [ -n "$KEEP" ] && { mv "$KEEP" /c/EditStudio || { echo "C:\\EditStudio was not put back (it is at $KEEP)"; exit 1; }; }
+          [ $ok = 1 ] && echo "both say where the data is, nothing moved" || exit 1
+      - name: a theme.json written by PowerShell is read (1.0.32) — «> theme.json» in Windows PowerShell 5.1 writes UTF-16LE; a wide clip stays wide
+        run: |
+          W="$(cygpath -u "$RUNNER_TEMP")/utf16-work"; rm -rf "$W"; mkdir -p "$W"
+          cat > "$W/write.ps1" <<'PS'
+          param([string]$Out)
+          '{"frame": "wide"}' > $Out
+          PS
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$(cygpath -w "$W/write.ps1")" -Out "$(cygpath -w "$W/theme.json")"
+          [ "$(head -c 2 "$W/theme.json" | od -An -tx1 | tr -d ' \n')" = fffe ] || { echo "PowerShell did not write UTF-16 here, so this proves nothing"; exit 1; }
+          SC="$(cygpath -w "$HOME/.claude/skills/video-edit/scripts")"
+          R="$(PYTHONIOENCODING=utf-8 python -c "import sys; sys.path.insert(0, sys.argv[1]); import _paths; print(_paths.frame(sys.argv[2]))" "$SC" "$(cygpath -w "$W")" | tr -d '\r')"
+          echo "frame: $R"
+          [ "$R" = "(1920, 1080)" ] || { echo "the UTF-16 theme.json was not read (a wide clip turned tall)"; exit 1; }
+          rm -rf "$W"
+      - name: a forced end leaves no voice-note prompt behind (1.0.32) — the voice tool warmed, the server ended as Task Manager ends it, no mohrer-stt-* folder stays in TEMP
+        # stt.mjs writes the note prompt into a new %TEMP%\mohrer-stt-XXXXXX folder per worker; a forced end never reached its
+        # rm, so one folder stayed per kill. The worker now removes its own once read
+        run: |
+          S="$HOME/Documents/video-edit/studio/app/scripts"
+          D="$HOME/Documents/video-edit/studio"
+          T="$(cygpath -u "$TEMP")"
+          before="$(find "$T" -maxdepth 1 -type d -name 'mohrer-stt-*' | sort)"
+          URL="$(bash "$S/studio.sh" status | sed -n 's/^running: //p')"
+          FOLDER="$(node -e 'const l=JSON.parse(require("fs").readFileSync(0,"utf8")).projects||[];process.stdout.write((l[0]||{}).folder||"")' < <(curl -s -m 30 "${URL}api/projects"))"
+          [ -n "$FOLDER" ] || { echo "no clip to warm the voice tool on"; exit 1; }
+          Q="$(node -p 'encodeURIComponent(process.argv[1])' "$FOLDER")"
+          curl -s -m 30 -X POST "${URL}x/$Q/api/stt/warm"; echo
+          for i in $(seq 1 120); do st="$(curl -s -m 10 "${URL}x/$Q/api/stt")"; case "$st" in *'"ready"'*|*'"missing"'*) break ;; esac; sleep 2; done
+          echo "voice tool: $st"
+          SPID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$(cygpath -m "$D/projects/.mohrer/server.json")")"
+          taskkill //F //T //PID "$SPID" || true
+          for i in $(seq 1 20); do tasklist //FI "PID eq $SPID" //NH | grep -q " $SPID " || break; sleep 1; done
+          tasklist //FI "PID eq $SPID" //NH | grep -q " $SPID " && { echo "the server $SPID did not end: this proves nothing"; exit 1; }
+          sleep 2
+          after="$(find "$T" -maxdepth 1 -type d -name 'mohrer-stt-*' | sort)"
+          left="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep . || true)"
+          bash "$S/start.sh" --no-open   # the steps after this one need the studio
+          NPID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$(cygpath -m "$D/projects/.mohrer/server.json")")"
+          bash "$S/studio.sh" status | grep -q '^running: ' && [ "$NPID" != "$SPID" ] || { echo "the studio did not come back after the forced end (pid $NPID)"; exit 1; }
+          case "$st" in *'"ready"'*) ;; *) echo "the voice tool never got ready, so this proves nothing: $st"; exit 1 ;; esac
+          [ -z "$left" ] || { echo "left behind: $left"; exit 1; }
+          echo "no mohrer-stt-* folder left after the forced end"
       - name: an Arabic user folder with a space (audit 1.0.19, P9) — everything installed again with HOME and USERPROFILE at «C:\Users\Public\مستخدم تجربة», the data falls back to C:/EditStudio, a clip from under that folder gives Arabic sentences, its face detector loads, and an export with a drawing comes out
         # what this pass is not: Windows' own account stays runneradmin (its registry folders, its Desktop); what moves is all the
         # studio reads from HOME and USERPROFILE (the skills, the Python and Node home folders, the transcription model's cache,

@@ -228,6 +228,8 @@ path_again(){ [ "$OS" = win ] && [ -z "$PATH_AGAIN" ] && PATH_AGAIN=1 && refresh
 # PowerShell ياخذ ثلث ثانية تقريبا: كل سكربت يناديها مرة وحدة. ما رد: مجلد المستخدم/Desktop. الماك: $HOME/Desktop
 desktop_dir(){
   local w=""
+  # ويندوز: STUDIO_DESKTOP اولا (مثل install.sh)، فالتجربة بمجلد ثاني ما تقرا ولا تكتب اختصار سطح المكتب الحقيقي
+  if [ "$OS" = win ] && [ -n "${STUDIO_DESKTOP:-}" ]; then cygpath -u "$STUDIO_DESKTOP" 2>/dev/null || printf '%s' "$STUDIO_DESKTOP"; return; fi
   [ "$OS" = win ] && w="$("${SYSTEMROOT:+$SYSTEMROOT/System32/WindowsPowerShell/v1.0/}powershell.exe" -NoProfile -NonInteractive -Command "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(\$false); [Environment]::GetFolderPath('Desktop')" </dev/null 2>/dev/null | tr -d '\r')"
   if [ -n "$w" ]; then cygpath -u "$w"; else printf '%s' "$UHOME/Desktop"; fi
 }

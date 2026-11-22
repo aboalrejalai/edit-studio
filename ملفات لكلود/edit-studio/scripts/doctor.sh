@@ -70,6 +70,12 @@ STT_TOOL="$PKG_DIR/studio/tools/stt-python.mjs"; [ -f "$STT_TOOL" ] || STT_TOOL=
 SPY=""; [ -n "$NODE" ] && [ -f "$STT_TOOL" ] && SPY="$("$NODE" "$STT_TOOL" 2>/dev/null </dev/null | tr -d '\r' | head -1)"
 # ويندوز: node يطبع المسار بصيغة ويندوز، وبايثون الفحص بصيغة Git Bash (عشان المقارنة والتشغيل تحت)
 [ "$OS" = win ] && [ -n "$SPY" ] && SPY="$(cygpath -u "$SPY" 2>/dev/null || printf '%s' "$SPY")"
+# الماك (1.0.32): ما فيه بايثون من 3.12 إلى 3.14 ولا بايثون مهارة المونتاج، والاستوديو يفرّغ على بايثون ثاني (SPY، مثل بايثون أبل 3.9
+# فيه mlx_whisper): الفحص عليه هو. قبل كان يطلع ✗ «Python 3.12 إلى 3.14 غير موجود» وينحسب مشكلة والتفريغ شغّال. الناقص هنا بايثون
+# أدوات الصوت بس (⚠ تحت)
+NO_BASE=0; [ "$OS" = mac ] && [ -z "$PYBIN" ] && [ -n "$SPY" ] && { NO_BASE=1; PYBIN="$SPY"; }
+# الماك: بايثون من Homebrew؟ مكان مكتباته (sys.prefix بعد الروابط) داخل Homebrew. بايثون أبل وpython.org وvenv مهارة المونتاج: لا
+brew_py(){ case "$("$1" -c 'import os, sys; print(os.path.realpath(sys.prefix))' </dev/null 2>/dev/null)" in /opt/homebrew/*|*/Cellar/*|*/homebrew/*) return 0 ;; esac; return 1; }
 # ويندوز: التفريغ على كرت NVIDIA يحتاج cuBLAS 12 (ctranslate2 ما يجيبه)، وfaster-whisper 1.2 ما يشتغل مع PyAV 15 واحدث.
 # بايثون لحاله (لو طاح بسبب DLL ما يطيح التقرير)، ومجلدات nvidia/*/bin قبل البحث مثل التفريغ نفسه (_whisper.py بمهارة المونتاج).
 # يطبع: نسخة PyAV، نسخة ctranslate2، عدد كروت CUDA، 1 لو الكرت يدعم float16، 1 لو cuBLAS يشتغل على الكرت، مكان cuBLAS (او -).
@@ -129,7 +135,10 @@ if command -v "$PYBIN" >/dev/null 2>&1; then
     MODEL_OK=0; "$PYBIN" "$FETCH" --has </dev/null >/dev/null 2>&1 && MODEL_OK=1
     if [ $MODEL_OK = 1 ]; then ok "Python $PV مع أداة التفريغ ونموذجها"
     else ok "Python $PV مع أداة التفريغ"; warn "نموذج التفريغ مو منزّل (~3 غيغابايت): ينزل مع setup.sh --install، أو الاستوديو ينزّله بنفسه أول تفريغ"; fi
-    [ "$OS" = mac ] && [ $MAC_VENV = 0 ] && warn "أداة التفريغ داخل بايثون Homebrew، وتحديث بايثون يضيّعها: setup.sh --install ينقلها لمجلد بايثون خاص"
+    # (1.0.32) بايثون أدوات الصوت ($DATA/py) ينبني من بايثون 3.12 إلى 3.14 بس: ما فيه واحد، وهو مو جاهز، فهذا الناقص (مو التفريغ)
+    [ $NO_BASE = 1 ] && ! { [ -x "$PY" ] && py_fits "$PY"; } && warn "أدوات الصوت ومشاهد الرسم تحتاج Python من 3.12 إلى 3.14، والموجود عندك $PV (التفريغ يعمل عليه): شغّل setup.sh --install ليثبّت Python 3.14"
+    # (1.0.32) Homebrew بس لو بايثون التفريغ نفسه منه: قبل كان يطلع لبايثون أبل بعد، لأنه يشوف بايثون مهارة المونتاج بس
+    [ "$OS" = mac ] && [ $MAC_VENV = 0 ] && brew_py "$PYBIN" && warn "أداة التفريغ داخل بايثون Homebrew، وتحديث بايثون يضيّعها: setup.sh --install ينقلها لمجلد بايثون خاص"
     if [ "$OS" = win ]; then
       read -r AVV CTV NDEV F16 CUBOK CUB <<< "$(stt_probe 2>/dev/null | tr -d '\r')"
       if [ -z "$NDEV" ]; then warn "تعذر فحص التفريغ على كرت الشاشة"
@@ -200,16 +209,37 @@ if [ "$OS" = win ]; then
   VW="$(cygpath -w "$VEB")"; vw="$(printf '%s\\' "$VW" | tr 'A-Z' 'a-z')"
   IFS='|' read -r CFA SAC <<< "$(powershell.exe -NoProfile -NonInteractive -Command '"$((Get-MpPreference).EnableControlledFolderAccess)|$((Get-MpComputerStatus).SmartAppControlState)"' </dev/null 2>/dev/null | tr -d '\r')"
   if [ "$CFA" = 1 ]; then case "$vw" in *\\documents\\*|*\\desktop\\*|*\\pictures\\*|*\\videos\\*|*\\music\\*)
-    warn "الحماية من برامج الفدية (Controlled folder access) شغالة ومجلد البيانات في مجلد محمي ($VW): ffmpeg وبايثون وNode ممكن ينمنعون من الكتابة فيه. الاسلم VEB_HOME برا المجلدات المحمية (مثل C:/VideoEdit)، او اسمح لـffmpeg.exe وnode.exe وpython.exe من Windows Security > Ransomware protection > Allow an app" ;;
+    warn "الحماية من برامج الفدية (Controlled folder access) شغالة ومجلد البيانات في مجلد محمي ($VW): ffmpeg وبايثون وNode ممكن ينمنعون من الكتابة فيه. الاسلم VEB_HOME برا المجلدات المحمية (مثل C:/EditStudio)، او اسمح لـffmpeg.exe وnode.exe وpython.exe من Windows Security > Ransomware protection > Allow an app" ;;
   esac; fi
   [ "$SAC" = On ] && warn "Smart App Control شغال: ممكن يمنع ffmpeg او مكتبات التفريغ وكاشف الوجه. ما له استثناء لبرنامج واحد: لو انمنع شي فالحل اطفاوه (Windows Security > App & browser control)، وهذا قرار المستخدم"
   for d in "$OneDrive" "$OneDriveConsumer" "$OneDriveCommercial"; do
     d="$(printf '%s' "${d%\\}" | tr 'A-Z' 'a-z')"
-    [ -n "$d" ] && case "$vw" in "$d"\\*) warn "مجلد البيانات داخل OneDrive ($VW): الفيديوهات والنسخ والادوات (غيغابايتات) بتتزامن للسحابة. حط VEB_HOME برا OneDrive (مثل C:/VideoEdit)"; break ;; esac
+    [ -n "$d" ] && case "$vw" in "$d"\\*) warn "مجلد البيانات داخل OneDrive ($VW): الفيديوهات والنسخ والادوات (غيغابايتات) بتتزامن للسحابة. حط VEB_HOME برا OneDrive (مثل C:/EditStudio)"; break ;; esac
   done
+  # مجلد البيانات من القاعدة (VEB_HOME فاضي، او نفس مجلد القاعدة لان _common.sh يصدره كذا، مثل التشخيص باخر setup.sh): لو بيانات
+  #   المونتاج في مجلد ثاني من مجلدات القاعدة (مثل OneDrive نقل «المستندات»)، نقول وين هي. _paths.home_split من مهارة المونتاج
+  #   (جنب هذي المهارة او في مجلد مهارات كلود)، نفس تنبيه 00_setup.sh. يقرا بس: ما ينقل شي ولا يسوي مجلد
+  if [ -n "$PYBIN" ] && [ "$(wp "$VEB")" = "$(wp "$(veb_default)")" ]; then
+    SPLIT=""
+    for c in "$PKG_DIR/../video-edit/scripts" "${CLAUDE_CONFIG_DIR:+$CLAUDE_CONFIG_DIR/skills/video-edit/scripts}" "$HOME/.claude/skills/video-edit/scripts"; do
+      [ -f "$c/_paths.py" ] || continue
+      SPLIT="$(VEB_HOME= "$PYBIN" -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _paths
+s = _paths.home_split()
+s and print("|".join([s[0], s[1], ", ".join(s[2]), "1" if s[3] else "0"]))' "$(wp "$c")" </dev/null 2>/dev/null | tr -d '\r')"
+      break
+    done
+    if [ -n "$SPLIT" ]; then
+      IFS='|' read -r NOW_HOME OLD_HOME OLD_WHAT OLD_OK <<< "$SPLIT"
+      if [ "$OLD_OK" = 1 ]; then
+        warn "فيه بيانات مونتاج في $OLD_HOME ($OLD_WHAT)، بس مجلد البيانات على هذا الجهاز الحين ${NOW_HOME}، فالمشاريع والملف الشخصي ومحرك الرسم بيبانون ضايعين. ما نقلت شي. عشان تكمل عليها اضبط VEB_HOME=$OLD_HOME (متغير للمستخدم من «Edit environment variables for your account»، وبعدها سكر كلود وافتحه)، او انقل محتواها لـ$NOW_HOME بنفسك"
+      else
+        warn "فيه بيانات مونتاج في $OLD_HOME ($OLD_WHAT)، بس مساره فيه حروف غير انجليزية او داخل OneDrive او AppData، فصار مجلد البيانات $NOW_HOME والمشاريع والملف الشخصي ومحرك الرسم بيبانون ضايعين. ما نقلت شي: انقل محتوى $OLD_HOME لـ$NOW_HOME بنفسك"
+      fi
+    fi
+  fi
   if [ -d "$VEB" ] && command -v ffmpeg >/dev/null 2>&1; then
     if ffmpeg -v error -f lavfi -i anullsrc=r=48000:cl=mono -t 0.1 -y "$VEB/.write-probe.wav" </dev/null >/dev/null 2>&1; then ok "ffmpeg يكتب في مجلد البيانات"
-    else bad "ffmpeg ما يقدر يكتب في مجلد البيانات ($VW): غالبا الحماية من برامج الفدية او برنامج حماية ثاني. الحل VEB_HOME برا Documents (مثل C:/VideoEdit)، او اسمح لـffmpeg.exe من Windows Security > Ransomware protection > Allow an app"; fi
+    else bad "ffmpeg ما يقدر يكتب في مجلد البيانات ($VW): غالبا الحماية من برامج الفدية او برنامج حماية ثاني. الحل VEB_HOME برا Documents (مثل C:/EditStudio)، او اسمح لـffmpeg.exe من Windows Security > Ransomware protection > Allow an app"; fi
     rm -f "$VEB/.write-probe.wav" 2>/dev/null
   fi
 fi

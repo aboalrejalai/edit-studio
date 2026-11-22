@@ -7,7 +7,7 @@
    شلون يشتغل: نقصّ جسم المتحدث بكل فريم (Vision بالماك · mediapipe بالويندوز)،
    نرسم الكلمة ممدودة بالكشيدة تحته، ثم نرجّع جسمه فوقها — فالكشيدة وحدها تمرّ ورا الراس
    والحروف تبقى بارزة على الجانبين.  يحتاج: ffmpeg + (ماك: أدوات Xcode · ويندوز: mediapipe). */
-const path=require('path'), fs=require('fs'), cp=require('child_process'), {readJSON}=require('./_paths');
+const path=require('path'), fs=require('fs'), cp=require('child_process'), {readJSON,rmTree}=require('./_paths');
 const W=path.resolve(process.argv[2])+path.sep, MODE=process.argv[3]||'plan';
 const SC=path.dirname(path.resolve(process.argv[1]))+path.sep;
 const caps=readJSON(W+'caps.json');
@@ -47,9 +47,13 @@ let PM=null;
 const PYENV=process.platform==='win32'?{env:{...process.env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},windowsHide:true}:{};   /* ويندوز: personmask.py بـUTF-8 لا بترميز النظام */
 const PM_HINT='❌ اداة القص ناقصة — جهزها ب bash scripts/00_setup.sh --install';   /* ويندوز: الاداة في venv ادوات المونتاج */
 /* ويندوز: personmask.py يطلع بـ3 لو ادواته ناقصة، فنطلع بـ4 مع التلميح (مثل لما الاداة ما تجهزت) بدل ما نطيح.
-   ويطلع بـ4 لو ما قرا ولا فريم (رسالته طلعت فوق)، فنطلع بـ4 مثله */
+   ويطلع بـ4 لو ما قرا ولا فريم (رسالته طلعت فوق)، فنطلع بـ4 مثله.
+   امر الاداة من _paths (بايثون والسكربت بين علامتي تنصيص JSON) نقطعه لكلماته وننادي execFileSync بلا cmd.exe،
+   فمجلد شغل فيه % او & او ^ يوصل كما هو (cmd كان يفك %OS% ويخرب المسار) */
+const argv=c=>c.match(/"(?:[^"\\]|\\.)*"|\S+/g).map(t=>t[0]==='"'?JSON.parse(t):t);
 function runPM(args){
-  try{ cp.execSync(PM+' '+args,{stdio:'inherit',...PYENV}); }
+  const a=argv(PM);
+  try{ cp.execFileSync(a[0],[...a.slice(1),...args],{stdio:'inherit',...PYENV}); }
   catch(e){ if(e.status===3){ console.log(PM_HINT); process.exit(4); } process.exit(e.status===4?4:1); }
 }
 fs.mkdirSync(W+'bt/src',{recursive:true}); fs.mkdirSync(W+'bt/mask',{recursive:true}); fs.mkdirSync(W+'bt/person',{recursive:true});
@@ -76,7 +80,7 @@ for(const [f0,f1] of ranges) for(let f=f0;f<=f1;f++){
 console.log('فريمات التأثير:',copied,'— أقصّ الشخص فيها…');
 
 /* 3) القصّ + بيانات الوجه */
-if(process.platform==='win32') runPM(JSON.stringify(W+'bt/src')+' '+JSON.stringify(W+'bt/mask')+' accurate 2.5'); else {
+if(process.platform==='win32') runPM([W+'bt/src',W+'bt/mask','accurate','2.5']); else {
   /* الماك (وغير ويندوز): رسالة مفهومة لو الأداة ناقصة، وفحص ٩٠٪ من الأقنعة — مثل قبل */
   const K=require('./_paths'), r=K.runPersonmask(PM,W+'bt/src',W+'bt/mask','accurate',2.5);
   if(!r.ok){ console.log('❌ '+K.personmaskProblem(r).text); process.exit(r.status===3?4:1); }
@@ -97,9 +101,10 @@ if(process.platform==='win32'){
      يكتب في bt/matte وننقلها بس لو طلع قناع لكل فريم، والا نكمل باقنعة mediapipe */
   const MT=require('./_paths').matte();
   if(MT){
-    fs.rmSync(W+'bt/matte',{recursive:true,force:true});
+    rmTree(W+'bt/matte');
     let ok=true;
-    try{ cp.execSync(MT+' '+JSON.stringify(W+'bt/src')+' '+JSON.stringify(W+'bt/matte')+' 2.5 '+JSON.stringify(W+'bt/mask'),{stdio:'inherit',...PYENV}); }catch(e){ ok=false; }
+    const m=argv(MT);
+    try{ cp.execFileSync(m[0],[...m.slice(1),W+'bt/src',W+'bt/matte','2.5',W+'bt/mask'],{stdio:'inherit',...PYENV}); }catch(e){ ok=false; }
     const ids=[];
     for(const [f0,f1] of ranges) for(let f=f0;f<=f1;f++){ const id=String(f).padStart(5,'0'); if(fs.existsSync(W+'bt/src/'+id+'.jpg')) ids.push(id); }
     if(ok&&ids.every(id=>fs.existsSync(W+'bt/matte/'+id+'.png'))) for(const id of ids) fs.renameSync(W+'bt/matte/'+id+'.png',W+'bt/mask/'+id+'.png');
@@ -109,6 +114,12 @@ if(process.platform==='win32'){
 
 /* 4) دمج القناع كشفافية → صورة الشخص وحده (كل مدى على حدة) */
 for(const [f0,f1] of ranges){
+  /* ويندوز: ffmpeg بقايمة كلمات بلا cmd.exe مثل الاداة فوق. وffmpeg نفسه يقرا % في نمط الفريمات (%05d)، فنكتبها %% بمسار الشغل */
+  if(process.platform==='win32'){ const WP=W.replace(/%/g,'%%');
+    cp.execFileSync('ffmpeg',['-v','error','-start_number',String(f0),'-i',WP+'bt/src/%05d.jpg',
+      '-start_number',String(f0),'-i',WP+'bt/mask/%05d.png','-frames:v',String(f1-f0+1),
+      '-filter_complex','[1:v]format=gray,scale=1080:1920[a];[0:v][a]alphamerge,format=rgba',
+      '-start_number',String(f0),'-y',WP+'bt/person/%05d.png'],{stdio:'pipe',windowsHide:true}); } else
   cp.execSync('ffmpeg -v error -start_number '+f0+' -i '+JSON.stringify(W+'bt/src/%05d.jpg')+
     ' -start_number '+f0+' -i '+JSON.stringify(W+'bt/mask/%05d.png')+
     ' -frames:v '+(f1-f0+1)+

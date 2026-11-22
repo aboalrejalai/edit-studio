@@ -2,6 +2,8 @@
 # ═══ المحرّك الثاني: ريموشن (تايم-لاين حي بدل رسم فريمات) ═══
 #   ./04b_remotion.sh <work> setup            → يجهّز المشروع بمجلد الشغل ويربطه بمحرّك الرسم المشترك
 #   ./04b_remotion.sh <work> engine           → ينزّل المحرّك المشترك (~400 ميقا، مرة وحدة لكل المقاطع) — بعد موافقته فقط
+#   ./04b_remotion.sh <work> engine-check     → يسأل عن أحدث ريموشن (بلا تنزيل) — أول كل شغل موشن
+#   ./04b_remotion.sh <work> engine-upgrade   → ينزّل الأحدث بجنبه ويفحصه على المقطع ويبدّل لو طابق — بعد موافقته فقط
 #   ./04b_remotion.sh <work> sync             → يحدّث البيانات والأصول فقط (بلا تنزيل)
 #   ./04b_remotion.sh <work> studio [port]    → يفتح الاستوديو الحي
 #   ./04b_remotion.sh <work> render [out.mp4] → يطلّع MP4 مباشرة (بلا فريمات)
@@ -30,14 +32,31 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)   # ويندوز: مسارات C:/ �
   W="$(cygpath -m "$W")"; TPL="$(cygpath -m "$TPL")"; SK="$(cygpath -m "$SK")"; R="$W/remotion"; SHARED="$(cygpath -m "$SHARED")" ;; esac
 
 engine_ready(){ [ -f "$SHARED/node_modules/remotion/package.json" ] && [ -f "$SHARED/node_modules/@remotion/cli/package.json" ]; }
+# رقم المحرّك المنزّل، والرقم اللي تطلبه هالنسخة من المهارة (remotion-shared/package.json). محرّك أقدم يشتغل عادي،
+#   بس ما فيه الجديد (4.0.545: بلير الحركة الحقيقي HtmlInCanvasMotionBlur وmotionBlur على الانتقالات).
+engine_have(){ sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$SHARED/node_modules/remotion/package.json" 2>/dev/null | head -1; }
+engine_want(){ sed -n 's/.*"remotion":[[:space:]]*"\([^"]*\)".*/\1/p' "$TPL/../remotion-shared/package.json" | head -1; }
+# a < b بأرقام النسخ (4.0.99 < 4.0.545)
+ver_lt(){ node -e 'const n=(v)=>String(v).split(/[.-]/).map((x)=>parseInt(x,10)||0),[a,b]=process.argv.slice(1).map(n);for(let i=0;i<3;i++){if(a[i]!==b[i])process.exit(a[i]<b[i]?0:1)}process.exit(1)' "$1" "$2"; }
+# المحرّك المنزّل مو أقدم من اللي تطلبه المهارة (أحدث منه = حدّثه engine-upgrade بعد فحص، يبقى)
+engine_current(){ engine_ready && ! ver_lt "$(engine_have)" "$(engine_want)"; }
+# أحدث ريموشن مستقر (وسم latest بـnpm، بلا نسخ التجربة) — فاضي لو ما فيه إنترنت
+engine_latest(){ npm view remotion dist-tags.latest 2>/dev/null | tr -d '[:space:]'; }
 
 install_engine(){
-  engine_ready && { echo "محرّك الرسم منزّل من قبل: $SHARED"; return; }
+  engine_current && { echo "محرّك الرسم منزّل من قبل: $SHARED ($(engine_have))"; return; }
+  engine_ready && echo "⏫ محرّك الرسم $(engine_have) ← $(engine_want): يتحدّث بنفس المكان (المقاطع المربوطة فيه تاخذ الجديد)."
   mkdir -p "$SHARED"
   cp "$TPL/../remotion-shared/package.json" "$TPL/../remotion-shared/package-lock.json" "$SHARED/"
   echo "⏬ تنزيل محرّك الرسم (~400 ميقا، مرة وحدة لكل المقاطع) بـ${SHARED}…"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)   # ويندوز: متصفح ريموشن بـnode مباشرة (remotion_cli تحت) بدل npx وcmd.exe، فمجلد بيانات فيه & او ^ ما يطيح التنزيل
+      ( cd "$SHARED" && npm ci --no-audit --no-fund --loglevel=error && remotion_cli "$SHARED/node_modules" && "${RUN[@]}" browser ensure >/dev/null ) \
+        || { echo "❌ فشل التنزيل"; exit 12; } ;;
+    *)
   ( cd "$SHARED" && npm ci --no-audit --no-fund --loglevel=error && npx --no-install remotion browser ensure >/dev/null ) \
     || { echo "❌ فشل التنزيل"; exit 12; }
+  esac
   echo "✅ المحرّك جاهز."
 }
 
@@ -50,6 +69,7 @@ link_engine(){
     echo "   اطلب موافقة المستخدم على التنزيل، ثم شغّل: bash scripts/04b_remotion.sh \"$W\" engine"
     exit 13
   fi
+  engine_current || echo "ℹ️  محرّك الرسم عندك $(engine_have) والمهارة تطلب $(engine_want) (فيه بلير الحركة الحقيقي). يشتغل عادي؛ للتحديث بعد موافقة المستخدم (~400 ميقا): bash scripts/04b_remotion.sh \"$W\" engine"
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)   # ويندوز: وصلة مجلد (junction) — ما تحتاج صلاحية مدير
       [ -f "$R/node_modules/remotion/package.json" ] && return       # الوصلة شغّالة
@@ -68,11 +88,13 @@ link_engine(){
 #   الاستوديو والرندر؛ node يشغل سكربت الـCLI نفسه (bin حق @remotion/cli) بدون cmd.exe.
 #   و_loopback.cjs يخلي خوادم ريموشن على 127.0.0.1 بس: ريموشن يفتحها على كل الشبكات ('::')، فتطلع نافذة الجدار الناري
 #   لـnode.exe باول رندر، ولو انسمح ينفتح المشروع للشبكة.
+#   ويندوز: $1 مجلد node_modules اللي فيه الـCLI (بدونه node_modules حق المشروع؛ install_engine يعطيه مجلد المحرك المشترك).
 remotion_cli(){
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
-      RCLI="$(node -p 'const d=process.argv[1],b=require(d+"/package.json").bin;require("path").join(d,typeof b==="string"?b:b.remotion)' "$(cygpath -m "$R/node_modules/@remotion/cli")" 2>/dev/null)" \
-        || { echo "❌ ما لقيت سطر اوامر ريموشن (@remotion/cli) بـ$R/node_modules"; exit 13; }
+      local nm="${1:-$R/node_modules}"
+      RCLI="$(node -p 'const d=process.argv[1],b=require(d+"/package.json").bin;require("path").join(d,typeof b==="string"?b:b.remotion)' "$(cygpath -m "$nm/@remotion/cli")" 2>/dev/null)" \
+        || { echo "❌ ما لقيت سطر اوامر ريموشن (@remotion/cli) بـ$nm"; exit 13; }
       RUN=(node --require "$(cygpath -m "$SK/_loopback.cjs")" "$RCLI") ;;
     *) RUN=(npx remotion) ;;
   esac
@@ -282,5 +304,50 @@ case "$CMD" in
         case "$VRC" in 0) ;; 3) echo "⛔ الصوت تغيّر — لا تسلّم" ;; *) echo "⛔ فحص الصوت ما تم (السبب فوق) — لا تسلّم قبل ما ينفحص" ;; esac; fi
     fi
     ;;
-  *) echo "أوامر: setup | engine | sync | studio | render | render-test"; exit 2 ;;
+  engine-check)
+    # يسأل npm عن أحدث ريموشن (ثانية، بلا تنزيل). كلود يشغّله أول كل شغل موشن، ولو فيه أحدث يسأل المستخدم.
+    engine_ready || { echo "⛔ محرّك الرسم غير منزّل بعد (اطلب موافقته، ثم: bash scripts/04b_remotion.sh \"$W\" engine)"; exit 13; }
+    HAVE="$(engine_have)"; L="$(engine_latest)"
+    if [ -z "$L" ]; then echo "ENGINE_CHECK unknown have=$HAVE"; echo "ℹ️  ما قدرت أسأل عن أحدث ريموشن (الإنترنت؟). المحرّك $HAVE يشتغل عادي."
+    elif ver_lt "$HAVE" "$L"; then echo "ENGINE_CHECK newer have=$HAVE latest=$L"
+      echo "🆕 فيه ريموشن أحدث: $L (عندك $HAVE). اسأل المستخدم «فيه نسخة أحدث من محرّك الرسم، أحدّثها وأفحصها على مقطعك؟» (~400 ميقا)."
+      echo "   بعد موافقته: bash scripts/04b_remotion.sh \"$W\" engine-upgrade"
+    else echo "ENGINE_CHECK current have=$HAVE"; echo "✅ محرّك الرسم $HAVE هو الأحدث."; fi ;;
+  engine-upgrade)
+    # بعد موافقته بس: ينزّل الأحدث (أو الرقم المعطى) بمجلد جانبي، يرسم إطارات من مقطعه بالقديم والجديد ويقارنها،
+    #   ويبدّل لو تطابقت (القديم يبقى <المحرّك>-old). لو اختلفت يبقى على القديم ويقول وين الصور.
+    engine_ready || { echo "⛔ محرّك الرسم غير منزّل بعد: bash scripts/04b_remotion.sh \"$W\" engine"; exit 13; }
+    sync_all >/dev/null; link_engine >/dev/null
+    HAVE="$(engine_have)"; TO="${ARG:-$(engine_latest)}"
+    printf '%s' "$TO" | grep -qE '^4\.[0-9]+\.[0-9]+$' || { echo "⛔ ما عرفت أحدث نسخة (الإنترنت؟): «${TO}»"; exit 2; }
+    ver_lt "$HAVE" "$TO" || { echo "✅ محرّك الرسم $HAVE مو أقدم من $TO: ما فيه شي ينزل."; exit 0; }
+    NEXT="$SHARED-next"; OLDS="$SHARED-old"; CMPD="$W/.engine-cmp"
+    case "$NEXT" in */remotion-shared-next) rm -rf "$NEXT" ;; *) echo "⛔ مسار غريب: $NEXT"; exit 2 ;; esac
+    mkdir -p "$NEXT"
+    node -e 'const fs=require("fs"),[src,to,v]=process.argv.slice(1),p=JSON.parse(fs.readFileSync(src,"utf8"));for(const k of Object.keys(p.dependencies||{}))if(k==="remotion"||k.startsWith("@remotion/"))p.dependencies[k]=v;fs.writeFileSync(to,JSON.stringify(p,null,2)+"\n")' \
+      "$SHARED/package.json" "$NEXT/package.json" "$TO"
+    echo "⏬ ريموشن $TO بمجلد جانبي (~400 ميقا) — المحرّك $HAVE ما ينلمس لين يخلص الفحص…"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)   # ويندوز: متصفح ريموشن بـnode مباشرة مثل install_engine (بلا npx وcmd.exe: مجلد بيانات فيه & او ^)
+        ( cd "$NEXT" && npm install --no-audit --no-fund --loglevel=error >/dev/null && remotion_cli "$NEXT/node_modules" && "${RUN[@]}" browser ensure >/dev/null ) \
+          || { echo "❌ فشل تنزيل $TO. المحرّك $HAVE باقي مثل ما هو."; rm -rf "$NEXT"; exit 12; } ;;
+      *)
+    ( cd "$NEXT" && npm install --no-audit --no-fund --loglevel=error >/dev/null && npx --no-install remotion browser ensure >/dev/null ) \
+      || { echo "❌ فشل تنزيل $TO. المحرّك $HAVE باقي مثل ما هو."; rm -rf "$NEXT"; exit 12; }
+    esac
+    echo "🔎 أرسم إطارات من مقطعك بالقديم والجديد وأقارنها…"
+    CRC=0; node "$SK/engine_cmp.cjs" "$R" "$SHARED/node_modules" "$NEXT/node_modules" "$CMPD" "$SK" || CRC=$?
+    case "$CRC" in
+      0) case "$OLDS" in */remotion-shared-old) rm -rf "$OLDS" ;; esac
+         if mv "$SHARED" "$OLDS" && mv "$NEXT" "$SHARED"; then
+           rm -rf "$CMPD"
+           echo "✅ محرّك الرسم صار $TO (كان $HAVE). مقطعك طلع نفسه، والمقاطع المربوطة كلها تاخذه. القديم احتياط بـ$OLDS"
+         else
+           [ -d "$SHARED" ] || mv "$OLDS" "$SHARED"
+           echo "⛔ ما قدرت أبدّل المجلد (برنامج فاتح المحرّك؟ سكّر الاستوديو الحي والرندر وعيد). المحرّك $HAVE باقي."; exit 4
+         fi ;;
+      3) echo "⛔ ريموشن $TO يرسم مقطعك بشكل مختلف، فخليته على $HAVE. الصور جنب بعض بـ$CMPD (old-/new-)، والجديد بـ$NEXT لو تبي تجرّبه."; exit 3 ;;
+      *) echo "⛔ الفحص ما كمل (السبب فوق)، فالمحرّك $HAVE باقي. الجديد بـ$NEXT."; exit 1 ;;
+    esac ;;
+  *) echo "أوامر: setup | engine | engine-check | engine-upgrade [رقم] | sync | studio | render | render-test"; exit 2 ;;
 esac

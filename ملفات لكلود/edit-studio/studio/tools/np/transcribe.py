@@ -168,6 +168,10 @@ def main():
         except OSError as e:
             out({'error': 'prompt file: %s' % e})
             return
+    if os.name == 'nt':
+
+
+        prompt = None
     with open(a.islands, encoding='utf-8') as f:
         isl = json.load(f)
     r = subprocess.run([a.ffmpeg, '-nostdin', '-v', 'error', '-i', a.pcm, '-ac', '1', '-ar', str(SR), '-f', 'f32le', 'pipe:1'],

@@ -29,6 +29,61 @@ def default_home(platform=None, env=None, home=None, exists=None, drive_root="C:
 
 HOME = default_home()
 
+_HOME_MARKS = ("profile.json", "remotion-shared")   # مجلد بيانات انستعمل فعلا، ومعها _home_projects (ensure() يسوي sounds وrefs وtools فاضية، وdoctor.sh يسوي studio)
+
+def _home_projects(c):
+    """نفس has_projects في _common.sh: مجلد ظاهر (مو .mohrer) في studio/projects او projects."""
+    import ntpath
+    for sub in (ntpath.join(c, "studio", "projects"), ntpath.join(c, "projects")):
+        try:
+            with os.scandir(sub) as it:
+                if any(e.is_dir() and not e.name.startswith(".") for e in it):
+                    return True
+        except OSError:
+            pass
+    return False
+
+def _home_link(c, now):
+    """نفس old_homes في _common.sh: وصلة (junction او symlink) لمجلد ثاني مو مجلد قديم، ولا المجلد المختار نفسه باسم ثاني."""
+    import stat
+    try:
+        return os.lstat(c).st_reparse_tag in (stat.IO_REPARSE_TAG_MOUNT_POINT, stat.IO_REPARSE_TAG_SYMLINK) or os.path.samefile(c, now)
+    except (OSError, AttributeError):
+        return False
+
+def home_split(platform=None, env=None, home=None, exists=None, drive_root="C:\\"):
+    """ويندوز وVEB_HOME وSTUDIO_DATA فاضيين (نفس شرط old_homes): default_home يختار Documents\\video-edit او C:\\EditStudio حسب المسار
+    وOneDrive، فلو تغير شي (مثل OneDrive نقل «المستندات») ينتقل مجلد البيانات بصمت، والمشاريع والملف الشخصي ومحرك الرسم تبان ضايعة.
+    يرجع None، او (المجلد المختار, مجلد ثاني فيه بيانات مونتاج, اللي لقاه فيه, يصلح VEB_HOME؟) بشرطات امامية.
+    المجلد المختار فيه ملف شخصي او مشاريع: None، الشغل هناك، والمشاريع اللي ما انتقلت يقولها studio.sh list.
+    يقرا بس: ما ينقل شي ولا يسوي مجلد. المعاملات محقونة للاختبار مثل default_home."""
+    import ntpath
+    env = os.environ if env is None else env
+    if env.get("VEB_HOME") or env.get("STUDIO_DATA") or (sys.platform if platform is None else platform) != "win32":
+        return None
+    home = os.path.expanduser("~") if home is None else home
+    now = default_home("win32", env, home, exists, drive_root)
+    has = exists or os.path.exists
+    if has(ntpath.join(now, "profile.json")) or _home_projects(now):
+        return None
+    plain = ntpath.join(home, "Documents", "video-edit")
+    alt = ntpath.join(drive_root, "EditStudio")
+    # المجلد القديم: Documents\video-edit، او نفس المجلد بعد ما نقله OneDrive مع «المستندات» (مثل old_homes)، او مجلد القاعدة الثاني
+    #   C:\EditStudio (old_homes ما يقراه: مجلد 0.9.6 دايم في المستندات)، لان القاعدة ترجع للمستندات لو راح مجلد OneDrive
+    seen = {ntpath.normcase(now)}
+    for c in [plain, alt] + [ntpath.join(env[k], "Documents", "video-edit") for k in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial") if env.get(k)]:
+        if ntpath.normcase(c) in seen:
+            continue
+        seen.add(ntpath.normcase(c))
+        if _home_link(c, now):
+            continue
+        found = (["projects"] if _home_projects(c) else []) + [m for m in _HOME_MARKS if has(ntpath.join(c, m))]
+        if found:
+            # يصلح VEB_HOME لو مساره ASCII وبرا OneDrive وAppData (نفس قاعدة default_home بدون فحص OneDrive)
+            usable = c == alt or (c == plain and default_home("win32", env, home, lambda p: False, drive_root) == plain)
+            return now.replace("\\", "/"), c.replace("\\", "/"), found, usable
+    return None
+
 def ensure():
     for d in ("", "sounds", "refs", "tools"):
         os.makedirs(os.path.join(HOME, d), exist_ok=True)
@@ -37,15 +92,25 @@ def ensure():
 def data(*p):
     return os.path.join(HOME, *p)
 
+def _json_nt(p):
+    """ويندوز: > وOut-File في PowerShell 5.1 يكتبون UTF-16LE يبدا بـFF FE. نقرا البايتات: FF FE تنفك utf-16، والباقي utf-8-sig مثل قبل."""
+    with open(p, "rb") as f:
+        b = f.read()
+    return json.loads(b.decode("utf-16" if b[:2] == b"\xff\xfe" else "utf-8-sig"))
+
 def load(name, default):
     p = data(name)
     if not os.path.exists(p):
         return default
+    if os.name == "nt":
+        return _json_nt(p)
     with open(p, encoding="utf-8-sig") as f:
         return json.load(f)
 
 def read_json(p):
     """JSON بترميز utf-8 وبتحمّل BOM — PowerShell 5.1 (Set-Content -Encoding utf8) يكتب BOM فيطيح json.load العادي."""
+    if os.name == "nt":
+        return _json_nt(p)
     with open(p, encoding="utf-8-sig") as f:
         return json.load(f)
 
@@ -120,8 +185,11 @@ def frame(work):
     """(W, H) لإطار المقطع من <work>/theme.json."""
     global _frame_warned
     try:
-        with open(os.path.join(work, "theme.json"), encoding="utf-8-sig") as f:
-            name = json.load(f).get("frame", "tall")
+        if os.name == "nt":   # ويندوز: theme.json مكتوب بـ> في PowerShell 5.1 (UTF-16LE) ينقرا بدل ما يصير طولي
+            name = _json_nt(os.path.join(work, "theme.json")).get("frame", "tall")
+        else:
+            with open(os.path.join(work, "theme.json"), encoding="utf-8-sig") as f:
+                name = json.load(f).get("frame", "tall")
     except (FileNotFoundError, NotADirectoryError):   # ما فيه theme.json: طولي بصمت
         name = "tall"
     except Exception as e:   # موجود وما انقرا (مثل مسار ويندوز بشرطة خلفية وحدة: Invalid \escape): طولي، والتحذير على stderr لان 03_cut_zoom.py يقرا امر الكاشف من stdout

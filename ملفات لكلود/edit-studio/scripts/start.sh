@@ -16,9 +16,16 @@ if [ -z "$URL" ]; then
   # الاستوديو يبقى شغّال بعد هالسكربت، فلازم ما يمسك مخرجه: بدون التحويل الأخير يظل اللي شغّل السكربت (كلود) منتظر
   # مخرج ما يجي لين تنتهي مهلته، مع إن الاستوديو اشتغل
   if [ "$OS" = win ]; then
-    # ويندوز: node يشغل السيرفر منفصل عن اي طرفية (بلا console) ومخفي، ومجلد شغله مجلد المستخدم: تسكير نافذة الطرفية
-    # ما يوقفه، ومجلد البيانات ما ينمسك كمجلد شغل (server.log يظل مفتوح، فالنقل بعد studio.sh stop)
-    "$NODE" -e "const{spawn}=require('child_process'),fs=require('fs'),os=require('os');const o=fs.openSync(process.argv[2],'a');spawn(process.execPath,[process.argv[1],...process.argv.slice(3)],{detached:true,windowsHide:true,cwd:os.homedir(),stdio:['ignore',o,o]}).unref()" "$APP/studio/start.mjs" "$DATA/server.log" ${STUDIO_PORT:+--port "$STUDIO_PORT"} >/dev/null 2>&1 </dev/null
+    # ويندوز: السيرفر لازم يملك كونسول مخفي له هو، فاي برنامج يبداه بلا windowsHide يورثه بدال ما تنفتح له نافذة طرفية فوق شغل
+    # المستخدم (سيرفر detached بلا كونسول: كل طفل بنافذة). وما يصير مباشرة من node: طفل node بلا detached يموت لما node ينتهي
+    # (libuv يحطه في job ينقتل مع ابوه)، وlibuv ما يعطي CREATE_NO_WINDOW لو السجل راح للطفل كـfd. فالطريق: node يشغل bash مخفي بلا
+    # اي fd، وbash يبدا السيرفر بالخلفية ويكتب السجل بنفسه وينتهي. يبقى bash صغير (8 ميقا تقريبا) اب للسيرفر وينتهي معه. مجلد الشغل
+    # مجلد المستخدم: تسكير نافذة الطرفية ما يوقفه، ومجلد البيانات ما ينمسك كمجلد شغل (server.log يظل مفتوح، فالنقل بعد studio.sh stop).
+    # بلا رجوع للطريق القديم لو فشل: رسالة السجل والتشخيص تحت تطلع، والنوافذ ما ترجع بصمت.
+    # كل وسيط بين علامتي تنصيص بيدنا (q مع windowsVerbatimArguments): bash هذا يقرا سطر اوامره بنفسه لان ابوه مو من msys، وlibuv ما
+    # ينصص الا اللي فيه مسافة او علامة تنصيص، فمجلد مستخدم فيه ' او {} ينقرا غلط والسيرفر ما يشتغل. وargv0 معها لان node يخليها بلا
+    # تنصيص في هالوضع ومسار Program Files فيه مسافة
+    "$NODE" -e "const{spawnSync}=require('child_process'),os=require('os'),q=a=>'\"'+a.replace(/\"/g,'\\\\\"')+'\"';process.exit(spawnSync(process.argv[1],['-c','n=\"\$1\";l=\"\$2\";shift 2;\"\$n\" \"\$@\" >>\"\$l\" 2>&1 </dev/null &','hop',...process.argv.slice(2)].map(q),{argv0:q(process.argv[1]),windowsVerbatimArguments:true,windowsHide:true,cwd:os.homedir(),stdio:'ignore'}).status||0)" "$(cygpath -w "$BASH")" "$NODE" "$DATA/server.log" "$APP/studio/start.mjs" ${STUDIO_PORT:+--port "$STUDIO_PORT"} >/dev/null 2>&1 </dev/null
   else
     # الماك: نفس طريقة ويندوز، node يشغّل السيرفر منفصل (مجموعة وجلسة لحاله، فقفل الطرفية ما يوقفه) ومخرجه بـserver.log،
     # ومجلد شغله مجلد البيانات زي قبل. كان بـnohup، وnohup حق أبل برا جلسة المستخدم (sudo أو launchd) ما يقدر ينفصل وما

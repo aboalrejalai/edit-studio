@@ -209,18 +209,40 @@ if [ "$OS" = win ]; then   # ويندوز: numpy والتفريغ وكاشف ا�
   VW="$(cygpath -w "$VEB")"; vw="$(printf '%s\\' "$VW" | tr 'A-Z' 'a-z')"
   IFS='|' read -r CFA SAC <<< "$(powershell.exe -NoProfile -NonInteractive -Command '"$((Get-MpPreference).EnableControlledFolderAccess)|$((Get-MpComputerStatus).SmartAppControlState)"' </dev/null 2>/dev/null | tr -d '\r')"
   if [ "$CFA" = 1 ]; then case "$vw" in *\\documents\\*|*\\desktop\\*|*\\pictures\\*|*\\videos\\*|*\\music\\*)
-    line "⚠️  الحماية من برامج الفدية (Controlled folder access) شغالة ومجلد البيانات في مجلد محمي ($VW): ffmpeg وبايثون وNode ممكن ينمنعون من الكتابة فيه. الاسلم VEB_HOME برا المجلدات المحمية (مثل C:/VideoEdit)، او اسمح لـffmpeg.exe وnode.exe وpython.exe من Windows Security > Ransomware protection > Allow an app" ;;
+    line "⚠️  الحماية من برامج الفدية (Controlled folder access) شغالة ومجلد البيانات في مجلد محمي ($VW): ffmpeg وبايثون وNode ممكن ينمنعون من الكتابة فيه. الاسلم VEB_HOME برا المجلدات المحمية (مثل C:/EditStudio)، او اسمح لـffmpeg.exe وnode.exe وpython.exe من Windows Security > Ransomware protection > Allow an app" ;;
   esac; fi
   [ "$SAC" = On ] && line "⚠️  Smart App Control شغال: ممكن يمنع ffmpeg او مكتبات التفريغ وكاشف الوجه. ما له استثناء لبرنامج واحد: لو انمنع شي فالحل اطفاوه (Windows Security > App & browser control)، وهذا قرار المستخدم"
   for d in "$OneDrive" "$OneDriveConsumer" "$OneDriveCommercial"; do
     d="$(printf '%s' "${d%\\}" | tr 'A-Z' 'a-z')"
-    [ -n "$d" ] && case "$vw" in "$d"\\*) line "⚠️  مجلد البيانات داخل OneDrive ($VW): الفيديوهات والنسخ والادوات (غيغابايتات) بتتزامن للسحابة. حط VEB_HOME برا OneDrive (مثل C:/VideoEdit)"; break ;; esac
+    [ -n "$d" ] && case "$vw" in "$d"\\*) line "⚠️  مجلد البيانات داخل OneDrive ($VW): الفيديوهات والنسخ والادوات (غيغابايتات) بتتزامن للسحابة. حط VEB_HOME برا OneDrive (مثل C:/EditStudio)"; break ;; esac
   done
+  # مجلد البيانات بدون VEB_HOME: القاعدة (_paths.default_home) تختار Documents\video-edit او C:\EditStudio، فلو تغير شي (مثل OneDrive نقل
+  #   «المستندات») وبيانات المونتاج في المجلد الثاني، نقول وين هي (_paths.home_split). تنبيه بس: ما ننقل شي ولا نسوي مجلد
+  if [ -z "$VEB_HOME" ] && [ -n "$PY$BASEPY" ]; then
+    SPLIT="$("${PY:-$BASEPY}" -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _paths
+s = _paths.home_split()
+s and print("|".join([s[0], s[1], ", ".join(s[2]), "1" if s[3] else "0"]))' "$(cygpath -m "$(cd "$(dirname "$0")" && pwd)")" </dev/null 2>/dev/null | tr -d '\r')"
+    if [ -n "$SPLIT" ]; then
+      IFS='|' read -r NOW_HOME OLD_HOME OLD_WHAT OLD_OK <<< "$SPLIT"
+      if [ "$OLD_OK" = 1 ]; then
+        line "⚠️  فيه بيانات مونتاج في $OLD_HOME ($OLD_WHAT)، بس مجلد البيانات على هذا الجهاز الحين ${NOW_HOME}، فالمشاريع والملف الشخصي ومحرك الرسم بيبانون ضايعين. ما نقلت شي. عشان تكمل عليها اضبط VEB_HOME=$OLD_HOME (متغير للمستخدم من «Edit environment variables for your account»، وبعدها سكر كلود وافتحه)، او انقل محتواها لـ$NOW_HOME بنفسك"
+      else
+        line "⚠️  فيه بيانات مونتاج في $OLD_HOME ($OLD_WHAT)، بس مساره فيه حروف غير انجليزية او داخل OneDrive او AppData، فصار مجلد البيانات $NOW_HOME والمشاريع والملف الشخصي ومحرك الرسم بيبانون ضايعين. ما نقلت شي: انقل محتوى $OLD_HOME لـ$NOW_HOME بنفسك"
+      fi
+    fi
+  fi
   if have ffmpeg; then
-    mkdir -p "$VEB" 2>/dev/null
-    ffmpeg -v error -f lavfi -i anullsrc=r=48000:cl=mono -t 0.1 -y "$VEB/.write-probe.wav" </dev/null >/dev/null 2>&1 ||
-      { MISS+=("write"); SIZE+=("ffmpeg ما يقدر يكتب في مجلد البيانات ($VW): غالبا الحماية من برامج الفدية او برنامج حماية ثاني. الحل VEB_HOME برا Documents (مثل C:/VideoEdit)، او اسمح لـffmpeg.exe من Windows Security > Ransomware protection > Allow an app (التنزيل ما يحله)"); }
-    rm -f "$VEB/.write-probe.wav" 2>/dev/null
+    # الفحص بلا --install ما يسوي مجلد البيانات: لو مو موجود يكتب بمجلد موقت في اقرب مجلد موجود فوقه (مثل ما --install
+    # يسويه هناك، وC:\ نفسه يسمح بمجلد مو بملف) وينشال بعدها
+    WP="$VEB"; WT=""
+    if [ $INSTALL -eq 1 ]; then mkdir -p "$VEB" 2>/dev/null
+    elif [ ! -d "$VEB" ]; then
+      WP="$(cygpath -u "$VEB")"; while [ ! -d "$WP" ] && [ "$(dirname "$WP")" != "$WP" ]; do WP="$(dirname "$WP")"; done
+      WP="$(cygpath -m "$WP")"; WT="${WP%/}/.write-probe-$$"; WP="$WT"; mkdir "$WT" 2>/dev/null
+    fi
+    ffmpeg -v error -f lavfi -i anullsrc=r=48000:cl=mono -t 0.1 -y "$WP/.write-probe.wav" </dev/null >/dev/null 2>&1 ||
+      { MISS+=("write"); SIZE+=("ffmpeg ما يقدر يكتب في مجلد البيانات ($VW): غالبا الحماية من برامج الفدية او برنامج حماية ثاني. الحل VEB_HOME برا Documents (مثل C:/EditStudio)، او اسمح لـffmpeg.exe من Windows Security > Ransomware protection > Allow an app (التنزيل ما يحله)"); }
+    rm -f "$WP/.write-probe.wav" 2>/dev/null; [ -z "$WT" ] || rmdir "$WT" 2>/dev/null
   fi
   # اختياري، ما ينحسب ناقص: قص الشخص بنموذج MODNet لتاثير الكلام ورا الشخص (حواف الشعر احسن من mediapipe). النموذج بس يشتغل بالمعالج
   # من venv ادوات المونتاج، ومعه venv القص (onnxruntime-directml) يشتغل بكرت الشاشة. venv القص منفصل لان onnxruntime-directml
@@ -233,7 +255,7 @@ if [ "$OS" = win ]; then   # ويندوز: numpy والتفريغ وكاشف ا�
   if [ $INSTALL -eq 1 ] && [ "$2" = --cutout ]; then
     if ! model_ok; then
       line "⏬ نموذج قص الشخص (MODNet ~26 ميقا)…"; mkdir -p "$VEB/tools/models"
-      if curl -fsSL --retry 2 -o "$MODEL.part" "$MODNET_URL" && [ "$(sha256sum "$MODEL.part" | cut -d' ' -f1)" = "$MODNET_SHA" ]; then mv -f "$MODEL.part" "$MODEL"
+      if curl -fsSL --ssl-revoke-best-effort --retry 2 -o "$MODEL.part" "$MODNET_URL" && [ "$(sha256sum "$MODEL.part" | cut -d' ' -f1)" = "$MODNET_SHA" ]; then mv -f "$MODEL.part" "$MODEL"
       else rm -f "$MODEL.part"; line "⚠️  نموذج قص الشخص ما نزل او بصمته (sha256) مو نفس المثبتة، فما انحفظ"; fi
     fi
     if ! dml_ok; then   # القص بكرت الشاشة ما جربناه بالفحص: مكتباته تبقى بحدودها

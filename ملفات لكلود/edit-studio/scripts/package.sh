@@ -42,11 +42,14 @@ DIRS=("$HOME/Downloads" "$HOME/Desktop")
 # ويندوز: وبعدها مجلدات التنزيلات وسطح المكتب الحقيقية من ويندوز (OneDrive او المستخدم ممكن ينقلها برا مجلد المستخدم)، بلا تكرار.
 # PowerShell وحدة للاثنين، وUTF-8 عشان اسم مستخدم عربي
 if [ $WIN -eq 1 ]; then
+  # سطح المكتب: STUDIO_DESKTOP لو موجود (مثل install.sh وdesktop_dir)، فالتجربة بمجلد ثاني ما تدور بسطح المكتب الحقيقي
+  WDESK="; [Environment]::GetFolderPath('Desktop')"; [ -n "${STUDIO_DESKTOP:-}" ] && WDESK=""
   while IFS= read -r w; do
     w="$(cygpath -u "$w" 2>/dev/null)"; [ -n "$w" ] || continue
     n=0; for d in "${DIRS[@]}"; do [ "$(printf '%s' "$d" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$w" | tr 'A-Z' 'a-z')" ] && n=1; done
     [ $n -eq 0 ] && DIRS+=("$w")
-  done < <("${SYSTEMROOT:+$SYSTEMROOT/System32/WindowsPowerShell/v1.0/}powershell.exe" -NoProfile -NonInteractive -Command "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(\$false); (New-Object -ComObject Shell.Application).Namespace('shell:Downloads').Self.Path; [Environment]::GetFolderPath('Desktop')" </dev/null 2>/dev/null | tr -d '\r')
+  done < <("${SYSTEMROOT:+$SYSTEMROOT/System32/WindowsPowerShell/v1.0/}powershell.exe" -NoProfile -NonInteractive -Command "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(\$false); (New-Object -ComObject Shell.Application).Namespace('shell:Downloads').Self.Path$WDESK" </dev/null 2>/dev/null | tr -d '\r'
+           [ -n "${STUDIO_DESKTOP:-}" ] && printf '%s\n' "$STUDIO_DESKTOP")
 fi
 # ملف واحد (مجلد مفكوك أو zip): لقى الحزمة ← يطبعها ويطلع 0 (found)، والا يرجع
 try_one(){

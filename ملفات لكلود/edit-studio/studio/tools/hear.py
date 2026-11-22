@@ -17,6 +17,7 @@ NAMES = {'Whoosh, swoosh, swish': 'whoosh_swoosh_swish', 'Boom': 'boom', 'Thump,
          'Clicking': 'click', 'Tick': 'tick', 'Bell': 'bell', 'Chime': 'chime', 'Wind chime': 'wind_chime', 'Gong': 'gong',
          'Beep, bleep': 'beep', 'Finger snapping': 'finger_snapping', 'Clapping': 'clapping',
          'Drum': 'drum', 'Bass drum': 'bass_drum', 'Snare drum': 'snare_drum', 'Percussion': 'percussion',
+         'Cough': 'cough', 'Throat clearing': 'cough', 'Burping, eructation': 'burp',
          'Music': 'music', 'Speech': 'speech'}
 
 
@@ -43,7 +44,7 @@ def arg(name):
 
 if '--labels-only' in sys.argv:
     if arg('--labels'): labels_of(arg('--labels'))
-    print('\n'.join(NAMES.values())); sys.exit(0)
+    print('\n'.join(dict.fromkeys(NAMES.values()))); sys.exit(0)
 
 pos = [x for i, x in enumerate(sys.argv[1:], 1) if not x.startswith('--') and sys.argv[i - 1] not in ('--model', '--labels')]
 if not pos or not arg('--model') or not arg('--labels'):
@@ -52,6 +53,9 @@ win = float(pos[1]) if len(pos) > 1 else 1.0
 import soundfile as sf, onnxruntime as ort
 
 labels = labels_of(arg('--labels'))
+cols = {}
+for i, x in enumerate(labels): cols.setdefault(x, []).append(i)
+labels = list(cols)
 scale = np.array([SCALE.get(x, 1.0) for x in labels], np.float32)
 a, sr = sf.read(pos[0], dtype='float32', always_2d=True)
 if sr != SR: raise SystemExit(f'error: the audio is {sr} Hz, not {SR}')
@@ -70,6 +74,7 @@ if len(inp.shape) == 2 and n == N:
                            for i in range(0, len(starts), 64)])
 else:
     conf = np.stack([s.run([out], {inp.name: a[t:t + n]})[0].mean(axis=0) for t in starts])
+conf = np.stack([conf[:, c].max(axis=1) for c in cols.values()], axis=1)
 conf = np.minimum(conf * scale, 1.0)
 lines = []
 for t, c in zip(starts, conf):

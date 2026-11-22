@@ -20,7 +20,8 @@ function ensure(){ for(const d of ['','sounds','refs','tools']) fs.mkdirSync(pat
 function data(...p){ return path.join(HOME,...p); }
 /* أداة الرسم بالمتصفح: تُنزَّل مرة وحدة بمجلد بيانات المستخدم (tools/) لأن مجلد المهارة للقراءة فقط */
 /* رسالة وحدة لكل سكربتات المحرك الخفيف: سطر التثبيت الصحيح بمساره (00_setup.sh ما ينزلها، وnpm بلا prefix ينزلها بمجلد المهارة) */
-const PUP_HINT='ما لقيت اداة الرسم (puppeteer-core) — نزلها مرة وحدة بعد موافقة المستخدم: npm i --no-audit --no-fund --prefix "'+path.join(HOME,'tools')+'" puppeteer-core';
+/* ويندوز: السطر من puppeteerHint() تحت، مساره بـ/ مثل كل امر ينطبع للمستخدم (WINDOWS-RULES القسم 4). الماك نفس سطره */
+const PUP_HINT='ما لقيت اداة الرسم (puppeteer-core) — نزلها مرة وحدة بعد موافقة المستخدم: '+(process.platform==='win32'?puppeteerHint():'npm i --no-audit --no-fund --prefix "'+path.join(HOME,'tools')+'" puppeteer-core');
 function puppeteer(){
   for(const p of [process.env.PUPPETEER_PATH,'puppeteer-core',path.join(HOME,'tools','node_modules','puppeteer-core')]){
     if(!p) continue; try{ return require(p); }catch(e){}
@@ -167,6 +168,30 @@ function readJSON(p){
 }
 /* اسمنا لـreadJSON فوق (سكربتاتنا تناديه): نفس القراءة اللي تتحمل BOM وUTF-16 */
 function readJson(p){ return readJSON(p); }
+/* حذف ملف او مجلد بكل اللي فيه، مثل fs.rmSync مع recursive وforce. ويندوز: بلا fs.rmSync، لان Node 24 ينهي العملية كلها بلا رسالة
+   لو فشل الحذف على مسار فيه حروف مو انجليزية (مجلد شغل باسم عربي، وملف ماسكه برنامج ثاني مثل فاحص او عارض صور).
+   هنا lstat/readdir/unlink/rmdir (الوصلة تنشال نفسها ما تنتبع)، والمرفوض يتجرب 10 مرات (قرابة 3 ثواني) ثم خطا عادي (EBUSY)،
+   نفس rmTreeWin بالاستوديو (server/platform.mjs). غير ويندوز: fs.rmSync نفسه */
+function rmTree(p,platform){
+  if((platform||process.platform)!=='win32') return fs.rmSync(p,{recursive:true,force:true});
+  const walk=x=>{
+    let st; try{ st=fs.lstatSync(x); }catch(e){ if(e.code==='ENOENT') return; throw e; }
+    try{
+      if(st.isDirectory()){
+        let first=null;
+        for(const n of fs.readdirSync(x)){ try{ walk(path.join(x,n)); }catch(e){ first=first||e; } }
+        if(first) throw first;
+        fs.rmdirSync(x);
+      } else fs.unlinkSync(x);
+    }catch(e){ if(e.code!=='ENOENT') throw e; }
+  };
+  for(let i=1;;i++){
+    try{ return walk(p); }catch(e){
+      if(i>=10||!['EPERM','EBUSY','EACCES','ENOTEMPTY'].includes(e.code)) throw e;
+      try{ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,60*i); }catch(_){}
+    }
+  }
+}
 /* اسم ملف/مجلد يصلح على ويندوز — نفس sanitize_name بـ_paths.py بالحرف */
 function sanitizeName(name,fallback){
   const clean=x=>String(x==null?'':x).normalize('NFC').replace(/[\x00-\x1f\x7f<>:"\/\\|?*]/g,'-').replace(/^ +/,'').replace(/[ .]+$/,'');
@@ -191,4 +216,4 @@ function warnIfNotTall(work){
   if(f[0]!==1080||f[1]!==1920) console.error('⚠️ إطار هذا المقطع '+f[0]+'×'+f[1]+' والمحرّك الخفيف للطولي (1080×1920) فقط — الرسم والفحص بيطلعون غلط. استعمل ريموشن (04b_remotion.sh).');
   return f;
 }
-module.exports={defaultHome,warnIfNotTall,SKILL,HOME,ensure,data,puppeteer,PUP_HINT,puppeteerHint,chrome,chromeOrExit,chromeCandidates,personmask,runPersonmask,personmaskProblem,matte,pythonName,pyEnv,quotePath,readJSON,readJson,sanitizeName,frame,FRAMES};
+module.exports={defaultHome,warnIfNotTall,SKILL,HOME,ensure,data,puppeteer,PUP_HINT,puppeteerHint,chrome,chromeOrExit,chromeCandidates,personmask,runPersonmask,personmaskProblem,matte,pythonName,pyEnv,quotePath,readJSON,readJson,rmTree,sanitizeName,frame,FRAMES};

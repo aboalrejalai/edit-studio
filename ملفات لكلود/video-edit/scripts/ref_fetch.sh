@@ -21,7 +21,7 @@ V=$(printf '%s' "$H" | grep -o 'https://v1\.pinimg\.com/videos/[^"'"'"']*_720w\.
 [ -z "$V" ] && { echo "ما لقيت فيديو في $L"; exit 1; }
 T="$(mktemp -d)/ref.mp4"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) T="$(cygpath -m "$T")" ;; esac   # ويندوز: curl وffmpeg ادوات اصلية، مثل SK فوق
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; *) trap 'rm -rf "${T%/*}"' EXIT ;; esac   # الماك (مثل الحالي): المجلد المؤقت ينمسح عند الخروج، حتى لو التنزيل طاح
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) trap 'rm -f "$CE"; rm -rf "${T%/*}"' EXIT ;; *) trap 'rm -rf "${T%/*}"' EXIT ;; esac   # الماك (مثل الحالي): المجلد المؤقت ينمسح عند الخروج، حتى لو التنزيل طاح · ويندوز: نفسه (مع ref.mp4 لو خطوة طاحت)، ومعه ملف خطا curl لان هالـtrap يحل محل اللي فوق
 cu -sL -o "$T" "$V"
 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$T")
 FPS=$($PY -c "print(max(0.2,min(4,20/$DUR)))")

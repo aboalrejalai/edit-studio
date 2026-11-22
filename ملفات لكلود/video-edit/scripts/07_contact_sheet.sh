@@ -8,7 +8,7 @@ W="$(cd "$1" && pwd)"; OUT="$2"; shift 2
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) W="$(cygpath -m "$W")"; OUT="$(cygpath -m "$OUT")" ;; esac   # ويندوز: مسارات C:/ للادوات الاصلية، فتشتغل حتى مع MSYS_NO_PATHCONV=1 او MSYS2_ARG_CONV_EXCL='*'
 C="$W"; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) C="$W/.cache"; mkdir -p "$C"; attrib +h "$(cygpath -w "$C")" >/dev/null 2>&1 || true ;; esac   # ويندوز: النقطة ما تخبي .sheet بالمستكشف، فينحط بمجلد .cache مخفي
 TMP="$C/.sheet"; rm -rf "$TMP"; mkdir -p "$TMP"; i=0; IN=()
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; *) trap 'rm -rf "$TMP"' EXIT ;; esac   # الماك: لو ffmpeg فشل بنص الطريق ما يبقى .sheet بمجلد الشغل
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) trap 'rm -rf "$TMP"' EXIT ;; *) trap 'rm -rf "$TMP"' EXIT ;; esac   # الماك: لو ffmpeg فشل بنص الطريق ما يبقى .sheet بمجلد الشغل · ويندوز: نفسه، ما يبقى .sheet بمجلد .cache
 FONT=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) F="$(cygpath -m "${WINDIR:-C:/Windows}")/Fonts/arial.ttf"; [ -f "$F" ] && FONT="fontfile='${F%%:*}\:${F#*:}':" ;; esac   # ويندوز: ffmpeg حق gyan بلا fontconfig، وdrawtext بلا خط يطيح
 for t in "$@"; do
   i=$((i+1)); f="$TMP/$(printf %02d $i).jpg"
