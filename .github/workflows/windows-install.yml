@@ -317,11 +317,13 @@ jobs:
             *"console=yes"*"visible=False"*) echo "the server owns a hidden console" ;;
             *) echo "the server has no hidden console of its own: a child without windowsHide would open a window"; exit 1 ;;
           esac
-      - name: real work opens no console (1.0.32) — «مقطع جديد» (the whole montage) and an export, while every new console host under the server is counted
-        # A console window comes with a console host (conhost.exe) whose parent is the program that got it. The sampler lists
-        # each conhost.exe whose parent is the server or anything under it (the server's own hidden one has the hop bash as
-        # its parent, outside that tree). Polled every 150 ms: a child shorter than that can slip by; step A is the proof
-        # for those, this one is what the follower sees.
+      - name: real work opens no console window (1.0.32) — «مقطع جديد» (the whole montage) and an export, while every new console under the server is asked whether it has a window that shows
+        # Every console has a console host (conhost.exe) whose parent is the program that got it, a window or not: a child
+        # started with windowsHide and its own pipes gets one with no window (Node: CREATE_NO_WINDOW), and the first run of
+        # this step counted those (27 hosts: ffmpeg, ffprobe, python, taskkill). So each new host's program is asked, as step A asks the server
+        # (AttachConsole, GetConsoleWindow, IsWindowVisible): a window that shows fails the step. Polled every 150 ms: a
+        # child shorter than that can slip by (step A is the proof for those); a program gone before it was asked is counted
+        # apart, and at least one must have been asked, or the step proves nothing.
         run: |
           S="$HOME/Documents/video-edit/studio/app/scripts"
           D="$HOME/Documents/video-edit/studio"
@@ -330,6 +332,22 @@ jobs:
           cat > "$HOME/conhost-watch.ps1" <<'PS'
           param([int]$Root, [string]$Out, [string]$Stop)
           $ProgressPreference = 'SilentlyContinue'; $seen = @{}
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public static class WinOf {
+            [DllImport("kernel32.dll", SetLastError=true)] static extern bool FreeConsole();
+            [DllImport("kernel32.dll", SetLastError=true)] static extern bool AttachConsole(uint pid);
+            [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+            public static string Of(uint pid) {
+              FreeConsole();
+              if (!AttachConsole(pid)) return "gone";
+              IntPtr h = GetConsoleWindow(); bool v = h != IntPtr.Zero && IsWindowVisible(h);
+              FreeConsole();
+              return v ? "SHOWN" : (h != IntPtr.Zero ? "hidden-window" : "no-window");
+            }
+          }
+          "@
           Set-Content -Path $Out -Value '' -Encoding UTF8
           while (-not (Test-Path $Stop)) {
             $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name)
@@ -342,7 +360,8 @@ jobs:
               if ($p.Name -eq 'conhost.exe' -and $tree.Contains([int]$p.ParentProcessId) -and -not $seen.ContainsKey([int]$p.ProcessId)) {
                 $seen[[int]$p.ProcessId] = 1
                 $par = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1
-                Add-Content -Path $Out -Value ("conhost {0} for {1} {2}" -f $p.ProcessId, $p.ParentProcessId, $par.Name) -Encoding UTF8
+                $w = [WinOf]::Of([uint32]$p.ParentProcessId)
+                Add-Content -Path $Out -Value ("conhost {0} for {1} {2}: {3}" -f $p.ProcessId, $p.ParentProcessId, $par.Name, $w) -Encoding UTF8
               }
             }
             Start-Sleep -Milliseconds 150
@@ -383,9 +402,14 @@ jobs:
           sleep 2
           kill -0 "$WATCH" 2>/dev/null && [ -f "$OUT" ] || { echo "the console watcher was not running: this proves nothing"; exit 1; }
           : > "$STOP"; wait "$WATCH" 2>/dev/null || true
-          echo "new console hosts under the server:"; cat "$OUT"
-          [ -z "$(tr -d '\r\n\357\273\277' < "$OUT")" ] || { echo "a program the server started got a console of its own"; exit 1; }
-          echo "0 new consoles"
+          echo "new consoles under the server, and whether each has a window that shows:"; cat "$OUT"
+          L="$(tr -d '\r' < "$OUT")"
+          if printf '%s\n' "$L" | grep -q ': SHOWN'; then echo "a program the server started showed a console window"; exit 1; fi
+          ASKED="$(printf '%s\n' "$L" | grep -cE ': (no-window|hidden-window)$' || true)"
+          GONE="$(printf '%s\n' "$L" | grep -c ': gone$' || true)"
+          echo "consoles asked: $ASKED with no window that shows; gone before asked: $GONE"
+          [ -z "$(printf '%s' "$L" | tr -d '\n\357\273\277')" ] || [ "$ASKED" -gt 0 ] || { echo "no console could be asked: this proves nothing"; exit 1; }
+          echo "no console window showed"
       - name: a studio with no pack (1.0.27) — the install makes no packs folder and lists none; a stand-in piece put in <data>/home/packs waits for the yes (1.0.32), then is read by the server, listed and its files served (only from inside it); once it goes, the studio lists none again
         run: |
           S="$HOME/Documents/video-edit/studio/app/scripts"
